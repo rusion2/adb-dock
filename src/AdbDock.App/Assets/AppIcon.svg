@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>ADB Dock</title>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="#6B5CE7" />
+  <rect x="19" y="11" width="26" height="42" rx="6" fill="none" stroke="#FFFFFF" stroke-width="4" />
+  <path d="M 27 17 H 37 M 29 47 H 35" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+  <circle cx="46" cy="46" r="10" fill="#5EE8C3" stroke="#6B5CE7" stroke-width="4" />
+</svg>

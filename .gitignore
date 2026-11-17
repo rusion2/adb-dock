@@ -1,0 +1,9 @@
+# Local build, isolated test configuration and portable release outputs
+**/bin/
+**/obj/
+.build/
+artifacts/
+.vs/
+*.user
+*.suo
+预览图/debug-*.png

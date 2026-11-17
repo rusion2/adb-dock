@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb">
+  <title>ADB Dock · 让设备，触手可及</title>
+  <link rel="icon" href="src/AdbDock.App/Assets/AppIcon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-device" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10 18h4M10 5h4"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="m15 3 6 6-3 1-4 4v4l-2 2-8-8 2-2h4l4-4zM8 16l-5 5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="m10 3-.7 2.3-2 .9L5 5.7 3 9l1.7 1.8v2.4L3 15l2 3.3 2.3-.5 2 .9L10 21h4l.7-2.3 2-.9 2.3.5 2-3.3-1.7-1.8v-2.4L21 9l-2-3.3-2.3.5-2-.9L14 3z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M19 4v16M5 7l5 5-5 5M10 12h5"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7M7 12h14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 8a8.5 8.5 0 1 0 .1 7M20 3v5h-5"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="m8 5 1.5-2h5L16 5h3a2 2 0 0 1 2 2v12H3V7a2 2 0 0 1 2-2z"/><circle cx="12" cy="12" r="4"/></symbol>
+    <symbol id="i-install" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></symbol>
+    <symbol id="i-command" viewBox="0 0 24 24"><path d="m4 6 6 6-6 6M13 18h7"/></symbol>
+    <symbol id="i-mirror" viewBox="0 0 24 24"><rect x="2" y="3" width="15" height="12" rx="2"/><path d="M7 19h7M10 15v4"/><rect x="15" y="9" width="7" height="12" rx="1.5"/><path d="M18 18h1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="M8 5h12M8 12h12M8 19h12M3 5h.01M3 12h.01M3 19h.01"/></symbol>
+    <symbol id="i-usb" viewBox="0 0 24 24"><path d="M12 21V3m-3 3 3-3 3 3M12 15l-5-4V8m5 10 5-4v-4"/><circle cx="7" cy="6" r="2"/><path d="M15 6h4v4h-4z"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8 16a6 6 0 0 1 8 0M12 20h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="m12 3 10 18H2zM12 9v5m0 3h.01"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11H3z"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8z"/></symbol>
+    <symbol id="i-mouse" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="6"/><path d="M12 6v4"/></symbol>
+  </svg>
+
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="ADB Dock 首页"><span class="brand-logo"><svg><use href="#i-device"/></svg></span><span>ADB<span class="brand-light"> Dock</span></span><span class="version">CONCEPT / 01</span></a>
+    <nav aria-label="页面导航"><a class="nav-active" href="#preview">交互预览</a><a href="需求说明.md" target="_blank" rel="noopener">需求说明 <span aria-hidden="true">↗</span></a><span class="platform"><span class="windows-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Designed for Windows</span></nav>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div><div class="eyebrow"><span></span> 小小悬浮窗，让调试更从容</div><h1>设备状态，<span>始终在手边。</span></h1><p>连接一目了然，操作一步到位。不需要时，安静地待在屏幕边缘。</p></div>
+      <div class="intro-meta"><span class="meta-line"></span><span>轻量常驻 · 贴边收起 · 多设备管理</span><small>WINDOWS ADB COMPANION</small></div>
+    </section>
+
+    <section class="workbench" id="preview" aria-label="悬浮窗交互原型">
+      <div class="preview-column">
+        <div class="stage-caption"><span><span class="caption-dot"></span> 桌面预览 <span class="caption-divider">/</span> <span id="view-caption">设备面板</span></span><span class="caption-tip"><svg><use href="#i-mouse"/></svg> 长按 ADB 和数量，试试四边停靠</span></div>
+        <div class="desktop" id="desktop">
+          <div class="desktop-art" aria-hidden="true"><div class="ribbon ribbon-one"></div><div class="ribbon ribbon-two"></div><div class="ribbon ribbon-three"></div></div>
+          <div class="desktop-watermark" aria-hidden="true"><span>LESS FRICTION.</span><span>MORE FOCUS.</span><small>把专注，还给手头的工作。</small></div>
+          <div class="edge-guide left-guide" aria-hidden="true"></div><div class="edge-guide right-guide" aria-hidden="true"></div><div class="edge-guide top-guide" aria-hidden="true"></div><div class="edge-guide bottom-guide" aria-hidden="true"></div>
+
+          <section class="dock" id="dock" aria-label="ADB Dock 悬浮窗">
+            <header class="dock-titlebar" id="drag-handle">
+              <div class="dock-brand"><span class="mini-logo"><svg><use href="#i-device"/></svg></span><strong>ADB Dock</strong><span class="live-pill">实时</span></div>
+              <div class="title-actions"><button class="icon-button" id="pin-button" title="固定展开" aria-label="固定展开" aria-pressed="false"><svg><use href="#i-pin"/></svg></button><button class="icon-button" id="settings-button" title="设置" aria-label="打开设置"><svg><use href="#i-settings"/></svg></button><button class="icon-button" id="collapse-button" title="贴边收起" aria-label="贴边收起"><svg><use href="#i-collapse"/></svg></button></div>
+            </header>
+            <div class="dock-content" id="dock-content"></div>
+            <footer class="dock-footer"><span class="footer-message" id="footer-message" role="status"><span class="status-dot green"></span> 设备状态已同步</span><span class="footer-shortcut" id="footer-label">本地连接</span></footer>
+          </section>
+
+          <section class="edge-tab tone-warning" id="edge-tab" hidden aria-label="ADB 贴边设备列表">
+            <button class="edge-summary" id="edge-expand-button" aria-label="短按展开全部设备，长按拖动位置，方向键切换停靠边" title="点击展开；长按 ADB 和数量区域约 350ms 可拖动到四边"><span class="edge-brand">ADB</span><strong id="edge-count">2<span>/3</span></strong><span class="edge-state"><span class="status-dot amber"></span><span id="edge-status">待授权</span></span></button>
+            <div class="edge-device-list" id="edge-device-list" role="group" aria-label="各设备连接状态"></div>
+            <button class="edge-open-button" id="edge-open-button" aria-label="展开全部设备" title="展开全部设备"><svg class="edge-arrow"><use href="#i-chevron"/></svg></button>
+          </section>
+          <div class="desktop-tip" id="desktop-tip"><span class="keycap">↔</span><span>支持四边停靠 · 收起后长按ADB 和数量区域调整位置</span></div>
+          <div class="desktop-taskbar" aria-hidden="true"><span class="taskbar-weather"><span class="weather-orb"></span><span>晴朗<small>适合专注的一天</small></span></span><div class="taskbar-apps"><span class="taskbar-windows windows-mark"><i></i><i></i><i></i><i></i></span><span class="search-shape"></span><span class="folder-shape"></span><span class="taskbar-adb"><svg><use href="#i-device"/></svg></span></div><span class="taskbar-time">14:32<small>2026/11/17</small></span></div>
+        </div>
+        <div class="preview-bottom"><span><span class="simulation-dot"></span> 交互原型 · 所有设备与命令均为模拟</span><button id="reset-button"><svg><use href="#i-refresh"/></svg> 重置预览</button></div>
+      </div>
+
+      <aside class="control-rail" aria-label="原型体验控制">
+        <div class="rail-heading"><span class="section-number">01</span><h2>换个场景，看看状态</h2></div>
+        <p class="rail-description">不只是“连接或断开”，异常也值得被看见。</p>
+        <div class="scenario-list" role="group" aria-label="模拟设备场景">
+          <button class="scenario" data-scenario="healthy" aria-pressed="false"><span class="scenario-icon healthy"><svg><use href="#i-check"/></svg></span><span><strong>一切就绪</strong><small>2 台设备，全部在线</small></span><span class="radio-indicator"></span></button>
+          <button class="scenario selected" data-scenario="mixed" aria-pressed="true"><span class="scenario-icon mixed"><svg><use href="#i-warning"/></svg></span><span><strong>有设备需要授权</strong><small>2 台在线，1 台未授权</small></span><span class="radio-indicator"></span></button>
+          <button class="scenario" data-scenario="offline" aria-pressed="false"><span class="scenario-icon empty"><svg><use href="#i-device"/></svg></span><span><strong>有设备暂时离线</strong><small>1 台在线，1 台通信中断</small></span><span class="radio-indicator"></span></button>
+          <button class="scenario" data-scenario="empty" aria-pressed="false"><span class="scenario-icon empty"><svg><use href="#i-usb"/></svg></span><span><strong>暂时没有设备</strong><small>等待下一次连接</small></span><span class="radio-indicator"></span></button>
+          <button class="scenario" data-scenario="error" aria-pressed="false"><span class="scenario-icon error"><svg><use href="#i-command"/></svg></span><span><strong>ADB 连接异常</strong><small>需要检查本地环境</small></span><span class="radio-indicator"></span></button>
+        </div>
+        <div class="rail-divider"></div>
+        <div class="rail-heading"><span class="section-number">02</span><h2>让它安静地待在一边</h2></div>
+        <p class="rail-description">每台设备一个图标；长按ADB 和数量区域，移到屏幕四边。</p>
+        <button class="edge-demo-button" id="edge-demo-button"><svg><use href="#i-collapse"/></svg><span>体验贴边收起</span><svg><use href="#i-chevron"/></svg></button>
+        <p class="rail-description">点击箭头展开后保持显示；拖动卡片到边缘松开，再收起。</p>
+        <div class="design-note"><span class="note-icon"><svg><use href="#i-spark"/></svg></span><div><strong>少一点切换，多一点专注。</strong><p>点击设备进入操作页，试试投屏、截图和安装 APK。</p></div></div>
+      </aside>
+    </section>
+
+    <section class="principles" aria-label="设计原则"><div><span>01 / ALWAYS VISIBLE</span><h3>收起窗口，不收起状态</h3><p>屏幕边缘的一小格，就能知道设备是否就绪。</p></div><div><span>02 / DEVICE FIRST</span><h3>每一次操作，都有明确对象</h3><p>先确认设备，再执行命令，多台连接也不混乱。</p></div><div><span>03 / QUIET BY DESIGN</span><h3>需要时出现，不需要时退后</h3><p>点击展开后保持显示，拖到边缘松开再收起。</p></div></section>
+  </main>
+  <footer class="site-footer"><span>ADB Dock <span class="footer-slash">/</span> Windows 悬浮设备助手</span><span>产品与交互概念 · V0.1</span></footer>
+
+  <dialog id="action-dialog" aria-labelledby="dialog-title"><div class="dialog-heading"><div><span class="dialog-eyebrow">ADB DOCK / 模拟操作</span><h2 id="dialog-title"></h2></div><button class="icon-button" id="dialog-close" aria-label="关闭弹窗"><svg><use href="#i-close"/></svg></button></div><div id="dialog-body"></div></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+  <input id="apk-input" type="file" accept=".apk" hidden aria-label="选择模拟安装的 APK 文件">
+</body>
+</html>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- WPF 使用清单配置 DPI；WinForms 仅用于托盘图标。 -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/App.ico</ApplicationIcon>
+    <AssemblyName>AdbDock</AssemblyName>
+    <RootNamespace>AdbDock.App</RootNamespace>
+    <Version>0.1.2</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets/App.ico" />
+    <ProjectReference Include="../AdbDock.Core/AdbDock.Core.csproj" />
+  </ItemGroup>
+</Project>

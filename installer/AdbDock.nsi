@@ -1,0 +1,397 @@
+; Build with the portable official NSIS compiler. The build wrapper supplies a
+; validated payload and an exact, generated uninstall manifest.
+Unicode true
+RequestExecutionLevel user
+ManifestDPIAware true
+!ifdef FAST_TEST_COMPRESSION
+  SetCompressor zlib
+!else
+  SetCompressor /SOLID lzma
+!endif
+
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+!include "Sections.nsh"
+!include "x64.nsh"
+
+!ifndef APP_VERSION
+  !error "APP_VERSION is required"
+!endif
+!ifndef PAYLOAD_DIR
+  !error "PAYLOAD_DIR is required"
+!endif
+!ifndef OUTPUT_FILE
+  !error "OUTPUT_FILE is required"
+!endif
+!ifndef FILE_MANIFEST
+  !error "FILE_MANIFEST is required"
+!endif
+!ifndef APP_ICON
+  !define APP_ICON "${__FILEDIR__}\..\src\AdbDock.App\Assets\App.ico"
+!endif
+
+; Override these at compile time for an isolated smoke build. In particular,
+; tests can place Run/uninstall values under an inert test-only HKCU subtree.
+!ifndef APP_REG_KEY
+  !define APP_REG_KEY "Software\AdbDock"
+!endif
+!ifndef UNINSTALL_REG_KEY
+  !define UNINSTALL_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AdbDock"
+!endif
+!ifndef RUN_REG_KEY
+  !define RUN_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
+!endif
+!ifndef RUN_VALUE
+  !define RUN_VALUE "AdbDock"
+!endif
+!ifndef APPROVAL_REG_KEY
+  !define APPROVAL_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+!endif
+!ifndef LINKS_ROOT
+  !define LINKS_ROOT "$SMPROGRAMS\ADB Dock"
+!endif
+!ifndef DESKTOP_ROOT
+  !define DESKTOP_ROOT "$DESKTOP"
+!endif
+!ifndef INSTANCE_MUTEX_PREFIX
+  !define INSTANCE_MUTEX_PREFIX "Local\AdbDock.Instance."
+!endif
+
+!include "${FILE_MANIFEST}"
+
+Name "ADB Dock ${APP_VERSION}"
+OutFile "${OUTPUT_FILE}"
+InstallDir "$LOCALAPPDATA\Programs\AdbDock"
+InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
+BrandingText "ADB Dock"
+ShowInstDetails show
+ShowUninstDetails show
+VIProductVersion "${APP_VERSION}.0"
+VIAddVersionKey /LANG=1033 "ProductName" "ADB Dock"
+VIAddVersionKey /LANG=1033 "FileDescription" "ADB Dock per-user installer"
+VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "LegalCopyright" ""
+
+Var CurrentUserSid
+Var PayloadDeleteFailed
+Var StartupApproved
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "${APP_ICON}"
+!define MUI_UNICON "${APP_ICON}"
+!define MUI_WELCOMEPAGE_TITLE "ADB Dock ${APP_VERSION}"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\AdbDock.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "$(LaunchApp)"
+!define MUI_LANGDLL_REGISTRY_ROOT HKCU
+!define MUI_LANGDLL_REGISTRY_KEY "${APP_REG_KEY}"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_COMPONENTS
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_UNPAGE_FINISH
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_LANGUAGE "English"
+
+LangString CoreName ${LANG_SIMPCHINESE} "ADB Dock 主程序（必选）"
+LangString CoreName ${LANG_ENGLISH} "ADB Dock application (required)"
+LangString StartupName ${LANG_SIMPCHINESE} "登录 Windows 后自动启动 ADB Dock"
+LangString StartupName ${LANG_ENGLISH} "Start ADB Dock when I sign in to Windows"
+LangString DesktopName ${LANG_SIMPCHINESE} "创建桌面快捷方式"
+LangString DesktopName ${LANG_ENGLISH} "Create a desktop shortcut"
+LangString CoreDescription ${LANG_SIMPCHINESE} "为当前用户安装程序与卸载入口，不需要管理员权限。保留已有配置和截图。"
+LangString CoreDescription ${LANG_ENGLISH} "Install the application and uninstaller for this user without administrator privileges. Existing settings and screenshots are retained."
+LangString StartupDescription ${LANG_SIMPCHINESE} "默认启用。登录 Windows 后启动本程序，可在安装时取消，或稍后在应用设置中关闭。"
+LangString StartupDescription ${LANG_ENGLISH} "Enabled by default. Start this application after signing in. Clear this option now or turn it off later in application Settings."
+LangString DesktopDescription ${LANG_SIMPCHINESE} "在当前用户桌面添加 ADB Dock 快捷方式。"
+LangString DesktopDescription ${LANG_ENGLISH} "Add an ADB Dock shortcut to this user's desktop."
+LangString LaunchApp ${LANG_SIMPCHINESE} "立即启动 ADB Dock"
+LangString LaunchApp ${LANG_ENGLISH} "Launch ADB Dock now"
+LangString NeedX64 ${LANG_SIMPCHINESE} "ADB Dock 需要 64 位 Windows。"
+LangString NeedX64 ${LANG_ENGLISH} "ADB Dock requires 64-bit Windows."
+LangString AppRunning ${LANG_SIMPCHINESE} "ADB Dock 正在运行。请从程序托盘或右键菜单选择退出，然后重试。安装程序不会强制结束你的程序。"
+LangString AppRunning ${LANG_ENGLISH} "ADB Dock is running. Exit it from its tray or context menu, then retry. Setup will not forcibly terminate the application."
+LangString CheckFailed ${LANG_SIMPCHINESE} "无法确认当前用户的程序运行状态，安装或卸载已停止。"
+LangString CheckFailed ${LANG_ENGLISH} "Could not verify the current user's application state. Installation or removal has stopped."
+LangString InstallFailed ${LANG_SIMPCHINESE} "安装未完成。请查看详细信息，检查安装目录和当前用户权限。"
+LangString InstallFailed ${LANG_ENGLISH} "Installation did not complete. Review the details and check the destination directory and user permissions."
+LangString UninstallFailed ${LANG_SIMPCHINESE} "部分程序文件无法删除，卸载未完成。请关闭相关窗口后重试。用户配置、截图和其他非程序文件不会删除。"
+LangString UninstallFailed ${LANG_ENGLISH} "Some application files could not be removed. Close related windows and retry. Settings, screenshots and unrelated files are retained."
+LangString UninstallTitle ${LANG_SIMPCHINESE} "卸载 ADB Dock"
+LangString UninstallTitle ${LANG_ENGLISH} "Uninstall ADB Dock"
+
+Section "$(CoreName)" SecCore
+  SectionIn RO
+  Call EnsureApplicationClosed
+  ClearErrors
+  SetOutPath "$INSTDIR"
+  SetOverwrite on
+  File /r "${PAYLOAD_DIR}\*"
+  IfErrors install_failed
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  CreateDirectory "${LINKS_ROOT}"
+  CreateShortcut "${LINKS_ROOT}\ADB Dock.lnk" "$INSTDIR\AdbDock.exe" "" "$INSTDIR\AdbDock.exe"
+  CreateShortcut "${LINKS_ROOT}\Uninstall ADB Dock.lnk" "$INSTDIR\Uninstall.exe"
+  WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "${APP_REG_KEY}" "Version" "${APP_VERSION}"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "ADB Dock"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "Publisher" "ADB Dock"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayIcon" "$INSTDIR\AdbDock.exe"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
+  WriteRegDWORD HKCU "${UNINSTALL_REG_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINSTALL_REG_KEY}" "NoRepair" 1
+  IfErrors install_failed
+  Goto install_done
+install_failed:
+  MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+  SetErrorLevel 2
+  Abort
+install_done:
+SectionEnd
+
+; Intentionally selected for a first install: the user requested login startup.
+Section "$(StartupName)" SecStartup
+  StrLen $0 '$\"$INSTDIR\AdbDock.exe$\"'
+  ${If} $0 > 260
+    MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+  ClearErrors
+  WriteRegStr HKCU "${RUN_REG_KEY}" "${RUN_VALUE}" '$\"$INSTDIR\AdbDock.exe$\"'
+  IfErrors startup_failed
+  ; Selecting this component is an explicit enable action. Remove only this
+  ; application's Explorer approval record, never another startup item's state.
+  DeleteRegValue HKCU "${APPROVAL_REG_KEY}" "${RUN_VALUE}"
+  Call ReadStartupApproval
+  ${If} $StartupApproved == 0
+    Goto startup_failed
+  ${EndIf}
+  ClearErrors
+  Goto startup_done
+startup_failed:
+  MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+  SetErrorLevel 2
+  Abort
+startup_done:
+SectionEnd
+
+Section /o "$(DesktopName)" SecDesktop
+  ClearErrors
+  CreateDirectory "${DESKTOP_ROOT}"
+  CreateShortcut "${DESKTOP_ROOT}\ADB Dock.lnk" "$INSTDIR\AdbDock.exe" "" "$INSTDIR\AdbDock.exe"
+  IfErrors 0 desktop_done
+  MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+  SetErrorLevel 2
+  Abort
+desktop_done:
+SectionEnd
+
+Section "-ApplyOptions"
+  ; On reinstall, an explicitly cleared startup option must disable an existing
+  ; registration for this installation without removing another copy's entry.
+  SectionGetFlags ${SecStartup} $0
+  IntOp $0 $0 & ${SF_SELECTED}
+  ${If} $0 == 0
+    ReadRegStr $0 HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+    ${If} $0 == '$\"$INSTDIR\AdbDock.exe$\"'
+      ClearErrors
+      DeleteRegValue HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+      ${If} ${Errors}
+        MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+        SetErrorLevel 2
+        Abort
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+SectionEnd
+
+Section "Uninstall"
+  Call un.EnsureApplicationClosed
+  StrCpy $PayloadDeleteFailed 0
+  !insertmacro RemovePayload
+  ${If} $PayloadDeleteFailed != 0
+    MessageBox MB_OK|MB_ICONSTOP "$(UninstallFailed)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+  ClearErrors
+  Delete "$INSTDIR\Uninstall.exe"
+  IfFileExists "$INSTDIR\Uninstall.exe" 0 uninstall_files_done
+  MessageBox MB_OK|MB_ICONSTOP "$(UninstallFailed)" /SD IDOK
+  SetErrorLevel 2
+  Abort
+uninstall_files_done:
+  ReadRegStr $0 HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+  ${If} $0 == '$\"$INSTDIR\AdbDock.exe$\"'
+    DeleteRegValue HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+    DeleteRegValue HKCU "${APPROVAL_REG_KEY}" "${RUN_VALUE}"
+  ${EndIf}
+  ReadRegStr $0 HKCU "${APP_REG_KEY}" "InstallDir"
+  ${If} $0 == "$INSTDIR"
+    ; A user may have installed a newer copy in another directory. An older
+    ; uninstaller must not remove the current copy's entry or shortcuts.
+    Delete "${LINKS_ROOT}\ADB Dock.lnk"
+    Delete "${LINKS_ROOT}\Uninstall ADB Dock.lnk"
+    RMDir "${LINKS_ROOT}"
+    Delete "${DESKTOP_ROOT}\ADB Dock.lnk"
+    DeleteRegKey HKCU "${UNINSTALL_REG_KEY}"
+    DeleteRegValue HKCU "${APP_REG_KEY}" "InstallDir"
+    DeleteRegValue HKCU "${APP_REG_KEY}" "Version"
+    DeleteRegValue HKCU "${APP_REG_KEY}" "InstallerLanguage"
+    DeleteRegKey /ifempty HKCU "${APP_REG_KEY}"
+  ${EndIf}
+  ; Nonrecursive removal preserves settings and unrelated user-added files.
+  RMDir "$INSTDIR"
+  ClearErrors
+SectionEnd
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} "$(CoreDescription)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecStartup} "$(StartupDescription)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "$(DesktopDescription)"
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+; Resolve the real process-token SID, matching App.xaml.cs exactly. Looking up a
+; title or process name could block unrelated applications or miss a hidden dock.
+!macro DefineStateFunctions Prefix
+Function ${Prefix}GetCurrentUserSid
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  StrCpy $CurrentUserSid ""
+  System::Call 'kernel32::GetCurrentProcess() p.r0'
+  System::Call 'advapi32::OpenProcessToken(p r0, i 0x0008, *p.r1) i.r2'
+  StrCmp $2 0 sid_done
+  System::Call 'advapi32::GetTokenInformation(p r1, i 1, p 0, i 0, *i.r2) i'
+  IntCmp $2 0 sid_close_token sid_close_token
+  System::Alloc $2
+  Pop $3
+  StrCmp $3 0 sid_close_token
+  System::Call 'advapi32::GetTokenInformation(p r1, i 1, p r3, i r2, *i.r2) i.r4'
+  StrCmp $4 0 sid_free
+  System::Call '*$3(p.r4)'
+  System::Call 'advapi32::ConvertSidToStringSidW(p r4, *p.r5) i.r4'
+  StrCmp $4 0 sid_free
+  System::Call '*$5(&w${NSIS_MAX_STRLEN}.r0)'
+  StrCpy $CurrentUserSid $0
+  System::Call 'kernel32::LocalFree(p r5)'
+sid_free:
+  System::Free $3
+sid_close_token:
+  System::Call 'kernel32::CloseHandle(p r1)'
+sid_done:
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function ${Prefix}EnsureApplicationClosed
+  Call ${Prefix}GetCurrentUserSid
+  ${If} $CurrentUserSid == ""
+    MessageBox MB_OK|MB_ICONSTOP "$(CheckFailed)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+check_again:
+  System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0 ?e'
+  Pop $1
+  ${If} $0 != 0
+    System::Call 'kernel32::CloseHandle(p r0)'
+    Goto application_running
+  ${EndIf}
+  ${If} $1 == 2
+    Return
+  ${EndIf}
+  ${If} $1 != 5
+    MessageBox MB_OK|MB_ICONSTOP "$(CheckFailed)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+application_running:
+  IfSilent stop_install
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(AppRunning)" IDRETRY check_again
+stop_install:
+  SetErrorLevel 2
+  Abort
+FunctionEnd
+!macroend
+!insertmacro DefineStateFunctions ""
+!insertmacro DefineStateFunctions "un."
+
+Function ReadStartupApproval
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  StrCpy $StartupApproved 0
+  System::Alloc 1024
+  Pop $3
+  ${If} $3 != 0
+    StrCpy $1 1024
+    System::Call 'advapi32::RegGetValueW(p 0x80000001, w "${APPROVAL_REG_KEY}", w "${RUN_VALUE}", i 0x00010008, *i.r0, p r3, *i.r1) i.r2'
+    ${If} $2 == 2
+      StrCpy $StartupApproved 1
+    ${ElseIf} $2 == 0
+      ${If} $1 > 0
+        System::Call '*$3(&i1.r2)'
+        ${If} $2 == 0
+        ${OrIf} $2 == 2
+        ${OrIf} $2 == 6
+          StrCpy $StartupApproved 1
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    System::Free $3
+  ${EndIf}
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function .onInit
+  SetShellVarContext current
+  SetRegView 64
+  !insertmacro MUI_LANGDLL_DISPLAY
+  ${IfNot} ${RunningX64}
+    MessageBox MB_OK|MB_ICONSTOP "$(NeedX64)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+  Call EnsureApplicationClosed
+  ; Preserve a user's previous opt-out on an upgrade. A fresh install keeps the
+  ; visible startup component selected by default.
+  ReadRegStr $0 HKCU "${APP_REG_KEY}" "InstallDir"
+  ${If} $0 != ""
+    ReadRegStr $1 HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+    ${If} $1 != '$\"$0\AdbDock.exe$\"'
+      !insertmacro UnselectSection ${SecStartup}
+    ${Else}
+      Call ReadStartupApproval
+      ${If} $StartupApproved == 0
+        !insertmacro UnselectSection ${SecStartup}
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function un.onInit
+  SetShellVarContext current
+  SetRegView 64
+  !insertmacro MUI_UNGETLANGUAGE
+  Call un.EnsureApplicationClosed
+FunctionEnd
