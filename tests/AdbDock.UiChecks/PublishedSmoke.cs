@@ -80,8 +80,8 @@ internal static class PublishedSmoke
                 if (!PostMessage(windowHandle, message, message == 0x0204 ? 2 : 0, clientPoint))
                     throw new TimeoutException("Published app did not respond to its directed mouse message.");
             Thread.Sleep(250);
-            var collapse = Find(window, "CollapseButton");
-            collapse?.SetFocus();
+            var closeButton = Find(window, "CloseButton");
+            closeButton?.SetFocus();
             PostMessage(windowHandle, 0x0100, 0x5D, 0x015D0001);
             PostMessage(windowHandle, 0x0101, 0x5D, unchecked((nint)(int)0xC15D0001));
             var exit = Until(() =>

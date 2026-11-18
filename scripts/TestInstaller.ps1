@@ -11,6 +11,7 @@ param(
     [Parameter(Mandatory = $true)][string]$NsisCompilerPath,
     [string]$FileManifest,
     [string]$AppVersion,
+    [string]$AppFileVersion,
     [ValidateRange(15, 600)][int]$ProcessTimeoutSeconds = 180
 )
 
@@ -19,15 +20,19 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'Installer checks require Windows.' }
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'ReleaseVersion.ps1')
 $payloadPath = [IO.Path]::GetFullPath($PayloadDirectory).TrimEnd('\')
 $compilerPath = [IO.Path]::GetFullPath($NsisCompilerPath)
 if (-not (Test-Path -LiteralPath (Join-Path $payloadPath 'AdbDock.exe') -PathType Leaf)) { throw 'The payload does not contain AdbDock.exe.' }
 if (-not (Test-Path -LiteralPath $compilerPath -PathType Leaf)) { throw 'The NSIS compiler was not found.' }
 if (-not $AppVersion) {
-    [xml]$applicationProject = Get-Content -LiteralPath (Join-Path $projectRoot 'src\AdbDock.App\AdbDock.App.csproj') -Raw
-    $AppVersion = [string]($applicationProject.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+    # Existing releases can be tested independently of the current source label.
+    $AppVersion = ([string](Get-Item -LiteralPath (Join-Path $payloadPath 'AdbDock.exe')).VersionInfo.ProductVersion).Split('+')[0]
 }
-if ($AppVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'AppVersion must have three numeric components.' }
+$releaseVersion = Get-ReleaseVersion -Version $AppVersion -FileVersion $AppFileVersion
+Assert-PayloadReleaseVersion -PayloadDirectory $payloadPath -ReleaseVersion $releaseVersion
+# This harness compiles only an isolated fixture; stable Git packaging gates do
+# not apply. Its full binary version still has to match the declared test label.
 
 $checkId = [Guid]::NewGuid().ToString('N')
 $runDirectory = Join-Path $projectRoot ('.build\installer-tests\' + $checkId)
@@ -45,7 +50,10 @@ $uninstallKey = $testRegistryRoot + '\Uninstall'
 $runKey = $testRegistryRoot + '\Run'
 $approvalKey = $testRegistryRoot + '\Approval'
 $mutexPrefix = 'Local\AdbDock.InstallerTests.' + $checkId + '.'
-$setupPath = Join-Path $runDirectory 'AdbDock-Isolated-Setup.exe'
+$exitEventPrefix = 'Local\AdbDock.InstallerTests.Exit.' + $checkId + '.'
+$fixtureOutput = Join-Path $runDirectory 'fixture'
+$fixtureExecutable = Join-Path $fixtureOutput 'RunningDockFixture.exe'
+$setupPath = Join-Path $runDirectory ('AdbDock-' + $AppVersion + '-Isolated-Setup.exe')
 $script:installerNativeCounter = 0
 $installerTestResults = New-Object 'System.Collections.Generic.List[object]'
 $registryHive = $null
@@ -180,6 +188,59 @@ function Install-TestCopy {
     Assert-InstallerCondition (Test-Path -LiteralPath (Join-Path $Directory 'Uninstall.exe') -PathType Leaf) 'Uninstaller was not created.'
 }
 
+function Start-RunningDockFixture {
+    param([string]$Directory, [string]$Mode, [string]$FixtureMutexPrefix = $mutexPrefix)
+    if (-not ([IO.Path]::GetFullPath($Directory) + '\').StartsWith($runDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The running fixture must be inside this test directory.'
+    }
+    [void][IO.Directory]::CreateDirectory($Directory)
+    $executable = Join-Path $Directory 'AdbDock.exe'
+    foreach ($sidecar in @('RunningDockFixture.dll', 'RunningDockFixture.deps.json', 'RunningDockFixture.runtimeconfig.json')) {
+        Copy-Item -LiteralPath (Join-Path $fixtureOutput $sidecar) -Destination $Directory -Force
+    }
+    Copy-Item -LiteralPath $fixtureExecutable -Destination $executable -Force
+    $token = [Guid]::NewGuid().ToString('N')
+    $ready = Join-Path $runDirectory ($token + '.ready')
+    $exitMarker = Join-Path $runDirectory ($token + '.exit')
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $executable
+    $arguments = @($Mode, $FixtureMutexPrefix, $exitEventPrefix, $ready, $exitMarker)
+    $start.Arguments = (($arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ')
+    $start.WorkingDirectory = $Directory
+    $start.UseShellExecute = $false
+    $process = [Diagnostics.Process]::Start($start)
+    $fixture = [pscustomobject]@{ Process = $process; ExitMarker = $exitMarker }
+    try {
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        while (-not [IO.File]::Exists($ready)) {
+            if ($process.HasExited -or $watch.Elapsed.TotalSeconds -gt 10) { throw 'The test dock failed to become ready.' }
+            Start-Sleep -Milliseconds 50
+        }
+        return $fixture
+    }
+    catch { Close-RunningDockFixture $fixture; throw }
+}
+
+function Close-RunningDockFixture {
+    param($Fixture)
+    if ($null -eq $Fixture) { return }
+    try {
+        if (-not $Fixture.Process.HasExited) {
+            # A test-owned decoy or failed fixture only, identified by its original process handle.
+            $Fixture.Process.Kill()
+            [void]$Fixture.Process.WaitForExit(3000)
+        }
+    }
+    finally { $Fixture.Process.Dispose() }
+}
+
+function Assert-GracefulFixtureExit {
+    param($Fixture, [string]$ExpectedReason)
+    Assert-InstallerCondition ($Fixture.Process.WaitForExit(1000) -and $Fixture.Process.ExitCode -eq 0) 'The running dock did not finish normal shutdown.'
+    Assert-InstallerCondition ([IO.File]::Exists($Fixture.ExitMarker) -and
+        [IO.File]::ReadAllText($Fixture.ExitMarker) -ceq $ExpectedReason) 'The running dock did not receive its expected graceful exit request.'
+}
+
 function Uninstall-TestCopy {
     param([string]$Directory)
     Invoke-OwnedProcess (Join-Path $Directory 'Uninstall.exe') @('/S')
@@ -226,6 +287,7 @@ try {
 
     $defines = [ordered]@{
         APP_VERSION = $AppVersion
+        APP_FILE_VERSION = $releaseVersion.FileVersion
         PAYLOAD_DIR = $payloadPath
         OUTPUT_FILE = $setupPath
         FILE_MANIFEST = $manifestPath
@@ -237,6 +299,7 @@ try {
         LINKS_ROOT = $menuDirectory
         DESKTOP_ROOT = $desktopDirectory
         INSTANCE_MUTEX_PREFIX = $mutexPrefix
+        EXIT_EVENT_PREFIX = $exitEventPrefix
         FAST_TEST_COMPRESSION = '1'
     }
     $compilerArguments = @('/INPUTCHARSET', 'UTF8', '/OUTPUTCHARSET', 'UTF8', '/WX', '/V2')
@@ -247,6 +310,10 @@ try {
     $unrelatedCommand = '"C:\Other Application\unchanged.exe"'
     Set-TestRegistryValue $runKey 'OtherApplication' $unrelatedCommand
     $expectedCommand = '"' + (Join-Path $installDirectory 'AdbDock.exe') + '"'
+    $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
+    $fixtureProject = Join-Path $projectRoot 'tests\installer\RunningDockFixture.csproj'
+    Invoke-OwnedProcess $dotnet @('publish', $fixtureProject, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false', '-o', $fixtureOutput,
+        '--artifacts-path', (Join-Path $runDirectory 'build'), '--disable-build-servers', '-p:NuGetAudit=false')
 
     Invoke-InstallerCheck 'Running-instance guard uses the isolated current-user SID mutex' {
         $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -261,11 +328,43 @@ try {
     Invoke-InstallerCheck 'Fresh Unicode-path install defaults to quoted login startup and Start Menu links' {
         Install-TestCopy $installDirectory
         Assert-InstallerCondition ((Get-TestRegistryValue $runKey 'AdbDock') -eq $expectedCommand) 'Fresh login startup is not the quoted installed executable.'
-        Assert-InstallerCondition ((Get-TestRegistryValue $uninstallKey 'DisplayVersion') -eq $AppVersion) 'Uninstall version is missing.'
+        Assert-InstallerCondition ((Get-TestRegistryValue $uninstallKey 'DisplayVersion') -ceq $AppVersion) 'Uninstall version is missing.'
+        Assert-InstallerCondition ((Get-TestRegistryValue $uninstallKey 'DisplayName') -ceq ('ADB Dock ' + $AppVersion)) 'Installed-app display name lost the complete release label.'
         Assert-InstallerCondition (Test-Path -LiteralPath (Join-Path $menuDirectory 'ADB Dock.lnk')) 'Application Start Menu shortcut is missing.'
         Assert-InstallerCondition (Test-Path -LiteralPath (Join-Path $menuDirectory 'Uninstall ADB Dock.lnk')) 'Uninstall Start Menu shortcut is missing.'
         Assert-InstallerCondition (-not (Test-Path -LiteralPath (Join-Path $desktopDirectory 'ADB Dock.lnk'))) 'Optional desktop shortcut was selected by default.'
         [IO.File]::WriteAllText((Join-Path $installDirectory 'keep-user-file.txt'), 'User file must survive uninstall.')
+    }
+    Invoke-InstallerCheck 'Upgrade gracefully exits the hidden legacy dock and leaves the same-named decoy running' {
+        $decoy = Start-RunningDockFixture (Join-Path $runDirectory 'Unrelated Copy') 'modern' ($mutexPrefix + 'Decoy.')
+        $legacy = $null
+        try {
+            $legacy = Start-RunningDockFixture $installDirectory 'legacy'
+            Install-TestCopy $installDirectory
+            Assert-GracefulFixtureExit $legacy 'menu'
+            Assert-InstallerCondition (-not $decoy.Process.HasExited -and -not [IO.File]::Exists($decoy.ExitMarker)) 'The installer signaled an unrelated same-name process.'
+        }
+        finally { Close-RunningDockFixture $legacy; Close-RunningDockFixture $decoy }
+    }
+    Invoke-InstallerCheck 'Upgrade waits for the registered modern dock when the destination changes' {
+        $modern = Start-RunningDockFixture $installDirectory 'modern'
+        try {
+            Install-TestCopy $movedDirectory
+            Assert-GracefulFixtureExit $modern 'event'
+        }
+        finally { Close-RunningDockFixture $modern }
+        Install-TestCopy $installDirectory
+    }
+    Invoke-InstallerCheck 'Silent upgrade stops before replacing files when the running dock cannot accept shutdown' {
+        $unresponsive = Start-RunningDockFixture $installDirectory 'unresponsive'
+        try {
+            Invoke-OwnedProcess $setupPath @('/S') 2 -InstallDirectory $installDirectory
+            Assert-InstallerCondition (-not $unresponsive.Process.HasExited) 'The installer forcibly terminated an unresponsive application.'
+            $expectedHash = (Get-FileHash -LiteralPath $fixtureExecutable).Hash
+            $observedHash = (Get-FileHash -LiteralPath (Join-Path $installDirectory 'AdbDock.exe')).Hash
+            Assert-InstallerCondition ($observedHash -eq $expectedHash) 'Setup modified the executable despite the shutdown refusal.'
+        }
+        finally { Close-RunningDockFixture $unresponsive }
     }
     Invoke-InstallerCheck 'Upgrade preserves an explicit login-startup opt-out' {
         Remove-TestRegistryValue $runKey 'AdbDock'
@@ -333,6 +432,9 @@ finally {
     $report = [ordered]@{
         passed = ($null -eq $failure)
         appVersion = $AppVersion
+        fileVersion = $releaseVersion.FileVersion
+        releaseChannel = $releaseVersion.Channel
+        setupFile = [IO.Path]::GetFileName($setupPath)
         payloadDirectory = $payloadPath
         compiler = $compilerPath
         testDirectory = $runDirectory

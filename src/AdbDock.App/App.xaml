@@ -16,26 +16,28 @@
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="#ADA4F1"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.7"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.4"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Accent}"/><Setter TargetName="Surface" Property="BorderThickness" Value="2"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Width" Value="32"/><Setter Property="Height" Value="32"/><Setter Property="Padding" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="FontSize" Value="16"/></Style>
-    <Geometry x:Key="PinGlyphGeometry">M8 3 H16 V6 H15 V11 L18 15 H6 L9 11 V6 H8 Z M12 15 V21</Geometry>
+    <Geometry x:Key="FloatingTabGeometry">M5 4 H19 Q21 4 21 6 V18 Q21 20 19 20 H5 Q3 20 3 18 V6 Q3 4 5 4 Z M15 4 V20</Geometry>
+    <Geometry x:Key="CloseGlyphGeometry">M6 6 L18 18 M18 6 L6 18</Geometry>
     <Geometry x:Key="SettingsGlyphGeometry">M4 7 H10 M10 4 V10 M10 7 H20 M4 17 H14 M14 14 V20 M14 17 H20</Geometry>
-    <Geometry x:Key="ChevronRightGeometry">M8 5 L16 12 L8 19</Geometry>
     <Style x:Key="ToolbarGlyph" TargetType="Path">
       <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/>
-      <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"/>
+      <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ButtonBase}}}"/>
       <Setter Property="StrokeThickness" Value="1.8"/><Setter Property="StrokeStartLineCap" Value="Round"/><Setter Property="StrokeEndLineCap" Value="Round"/><Setter Property="StrokeLineJoin" Value="Round"/>
       <Setter Property="IsHitTestVisible" Value="False"/>
     </Style>
-    <Style x:Key="HeaderIconButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+    <Style x:Key="HeaderIconButton" TargetType="ButtonBase">
+      <Setter Property="Width" Value="32"/><Setter Property="Height" Value="32"/><Setter Property="Padding" Value="0"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
       <Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="BorderBrush" Value="Transparent"/>
       <Setter Property="Margin" Value="2,0,0,0"/>
-      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ButtonBase">
         <Border x:Name="IconSurface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
           <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="IconSurface" Property="Background" Value="{StaticResource AccentTint}"/><Setter TargetName="IconSurface" Property="BorderBrush" Value="#D9D2F8"/><Setter TargetName="IconSurface" Property="BorderThickness" Value="1"/></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="IconSurface" Property="BorderBrush" Value="#B5ACEA"/><Setter TargetName="IconSurface" Property="BorderThickness" Value="1"/></Trigger>
           <Trigger Property="IsPressed" Value="True"><Setter TargetName="IconSurface" Property="Background" Value="#E7E2FF"/></Trigger>
-          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="IconSurface" Property="Background" Value="{StaticResource AccentTint}"/><Setter TargetName="IconSurface" Property="BorderBrush" Value="{StaticResource Accent}"/><Setter TargetName="IconSurface" Property="BorderThickness" Value="2"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="IconSurface" Property="BorderBrush" Value="{StaticResource Accent}"/><Setter TargetName="IconSurface" Property="BorderThickness" Value="2"/></Trigger>
           <Trigger Property="IsEnabled" Value="False"><Setter TargetName="IconSurface" Property="Opacity" Value="0.4"/></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>

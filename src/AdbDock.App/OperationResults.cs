@@ -35,7 +35,7 @@ public partial class MainWindow
             await SaveScreenshotAsync(row);
     }
 
-    private async System.Threading.Tasks.Task SaveScreenshotAsync(DeviceRow row)
+    private async System.Threading.Tasks.Task SaveScreenshotAsync(DeviceRow row, Window? owner = null)
     {
         if (operations is not { } service) return;
         var picker = new Microsoft.Win32.SaveFileDialog
@@ -45,10 +45,11 @@ public partial class MainWindow
             AddExtension = true, OverwritePrompt = true
         };
         if (Directory.Exists(settings.ScreenshotDirectory)) picker.InitialDirectory = settings.ScreenshotDirectory;
+        outsideSince = null;
         interactionDepth++;
         bool? accepted;
-        try { accepted = picker.ShowDialog(this); }
-        finally { interactionDepth--; }
+        try { accepted = picker.ShowDialog(owner ?? this); }
+        finally { interactionDepth--; previewOutsideSince = null; }
         if (accepted != true) return;
         await ExecuteAsync(row, "截图", token => service.ScreenshotAsync(row.Serial, picker.FileName, token),
             "截图已保存：" + picker.FileName, filePath: picker.FileName);

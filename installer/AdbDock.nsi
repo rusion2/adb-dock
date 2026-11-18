@@ -17,6 +17,9 @@ ManifestDPIAware true
 !ifndef APP_VERSION
   !error "APP_VERSION is required"
 !endif
+!ifndef APP_FILE_VERSION
+  !error "APP_FILE_VERSION (four numeric components) is required"
+!endif
 !ifndef PAYLOAD_DIR
   !error "PAYLOAD_DIR is required"
 !endif
@@ -56,6 +59,9 @@ ManifestDPIAware true
 !ifndef INSTANCE_MUTEX_PREFIX
   !define INSTANCE_MUTEX_PREFIX "Local\AdbDock.Instance."
 !endif
+!ifndef EXIT_EVENT_PREFIX
+  !define EXIT_EVENT_PREFIX "Local\AdbDock.Exit."
+!endif
 
 !include "${FILE_MANIFEST}"
 
@@ -63,17 +69,18 @@ Name "ADB Dock ${APP_VERSION}"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\AdbDock"
 InstallDirRegKey HKCU "${APP_REG_KEY}" "InstallDir"
-BrandingText "ADB Dock"
+BrandingText "ADB Dock ${APP_VERSION}"
 ShowInstDetails show
 ShowUninstDetails show
-VIProductVersion "${APP_VERSION}.0"
-VIAddVersionKey /LANG=1033 "ProductName" "ADB Dock"
-VIAddVersionKey /LANG=1033 "FileDescription" "ADB Dock per-user installer"
-VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}"
+VIProductVersion "${APP_FILE_VERSION}"
+VIAddVersionKey /LANG=1033 "ProductName" "ADB Dock ${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "FileDescription" "ADB Dock ${APP_VERSION} per-user installer"
+VIAddVersionKey /LANG=1033 "FileVersion" "${APP_FILE_VERSION}"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=1033 "LegalCopyright" ""
 
 Var CurrentUserSid
+Var InstallGuard
 Var PayloadDeleteFailed
 Var StartupApproved
 
@@ -103,8 +110,8 @@ LangString StartupName ${LANG_SIMPCHINESE} "登录 Windows 后自动启动 ADB D
 LangString StartupName ${LANG_ENGLISH} "Start ADB Dock when I sign in to Windows"
 LangString DesktopName ${LANG_SIMPCHINESE} "创建桌面快捷方式"
 LangString DesktopName ${LANG_ENGLISH} "Create a desktop shortcut"
-LangString CoreDescription ${LANG_SIMPCHINESE} "为当前用户安装程序与卸载入口，不需要管理员权限。保留已有配置和截图。"
-LangString CoreDescription ${LANG_ENGLISH} "Install the application and uninstaller for this user without administrator privileges. Existing settings and screenshots are retained."
+LangString CoreDescription ${LANG_SIMPCHINESE} "为当前用户安装。点击安装后，会先退出正在运行的旧版 ADB Dock。保留已有配置和截图。"
+LangString CoreDescription ${LANG_ENGLISH} "Install for this user. Setup closes the previous ADB Dock when you click Install. Existing settings and screenshots are retained."
 LangString StartupDescription ${LANG_SIMPCHINESE} "默认启用。登录 Windows 后启动本程序，可在安装时取消，或稍后在应用设置中关闭。"
 LangString StartupDescription ${LANG_ENGLISH} "Enabled by default. Start this application after signing in. Clear this option now or turn it off later in application Settings."
 LangString DesktopDescription ${LANG_SIMPCHINESE} "在当前用户桌面添加 ADB Dock 快捷方式。"
@@ -115,6 +122,10 @@ LangString NeedX64 ${LANG_SIMPCHINESE} "ADB Dock 需要 64 位 Windows。"
 LangString NeedX64 ${LANG_ENGLISH} "ADB Dock requires 64-bit Windows."
 LangString AppRunning ${LANG_SIMPCHINESE} "ADB Dock 正在运行。请从程序托盘或右键菜单选择退出，然后重试。安装程序不会强制结束你的程序。"
 LangString AppRunning ${LANG_ENGLISH} "ADB Dock is running. Exit it from its tray or context menu, then retry. Setup will not forcibly terminate the application."
+LangString ClosingApp ${LANG_SIMPCHINESE} "正在退出旧版 ADB Dock…"
+LangString ClosingApp ${LANG_ENGLISH} "Closing the previous ADB Dock…"
+LangString ExitIncomplete ${LANG_SIMPCHINESE} "ADB Dock 仍在运行。请完成当前操作，从托盘退出程序，然后点击“重试”继续安装。"
+LangString ExitIncomplete ${LANG_ENGLISH} "ADB Dock is still running. Finish any open operation, exit the app from its tray, and click Retry to continue setup."
 LangString CheckFailed ${LANG_SIMPCHINESE} "无法确认当前用户的程序运行状态，安装或卸载已停止。"
 LangString CheckFailed ${LANG_ENGLISH} "Could not verify the current user's application state. Installation or removal has stopped."
 LangString InstallFailed ${LANG_SIMPCHINESE} "安装未完成。请查看详细信息，检查安装目录和当前用户权限。"
@@ -138,7 +149,7 @@ Section "$(CoreName)" SecCore
   CreateShortcut "${LINKS_ROOT}\Uninstall ADB Dock.lnk" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${APP_REG_KEY}" "Version" "${APP_VERSION}"
-  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "ADB Dock"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "ADB Dock ${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "Publisher" "ADB Dock"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "InstallLocation" "$INSTDIR"
@@ -211,6 +222,8 @@ Section "-ApplyOptions"
       ${EndIf}
     ${EndIf}
   ${EndIf}
+  System::Call 'kernel32::CloseHandle(p $InstallGuard)'
+  StrCpy $InstallGuard 0
 SectionEnd
 
 Section "Uninstall"
@@ -306,7 +319,24 @@ Function ${Prefix}EnsureApplicationClosed
     SetErrorLevel 2
     Abort
   ${EndIf}
+!if "${Prefix}" == ""
+  StrCpy $2 0
+!endif
 check_again:
+!if "${Prefix}" == ""
+  ; Reserve the same singleton name until all setup sections finish. A login
+  ; launch during file replacement will see an existing instance and exit.
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0 ?e'
+  Pop $1
+  ${If} $0 != 0
+    ${If} $1 != 183
+      StrCpy $InstallGuard $0
+      Return
+    ${EndIf}
+    System::Call 'kernel32::CloseHandle(p r0)'
+    Goto application_running
+  ${EndIf}
+!else
   System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0 ?e'
   Pop $1
   ${If} $0 != 0
@@ -316,14 +346,45 @@ check_again:
   ${If} $1 == 2
     Return
   ${EndIf}
+!endif
   ${If} $1 != 5
     MessageBox MB_OK|MB_ICONSTOP "$(CheckFailed)" /SD IDOK
     SetErrorLevel 2
     Abort
   ${EndIf}
 application_running:
+!if "${Prefix}" == ""
+  ${If} $2 == 0
+    DetailPrint "$(ClosingApp)"
+    InitPluginsDir
+    File /oname=$PLUGINSDIR\RequestAppExit.ps1 "${__FILEDIR__}\RequestAppExit.ps1"
+    ReadRegStr $3 HKCU "${APP_REG_KEY}" "InstallDir"
+    ${If} $3 != ""
+    ${AndIf} $3 != "$INSTDIR"
+      Push $3
+      Call RequestExitInDirectory
+      Pop $4
+      ${If} $4 != 0
+        Goto request_incomplete
+      ${EndIf}
+    ${EndIf}
+    Push $INSTDIR
+    Call RequestExitInDirectory
+    Pop $4
+    ${If} $4 != 0
+      Goto request_incomplete
+    ${EndIf}
+    StrCpy $2 1
+    Goto check_again
+  ${EndIf}
+request_incomplete:
+  StrCpy $2 0
+  IfSilent stop_install
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(ExitIncomplete)" IDRETRY check_again
+!else
   IfSilent stop_install
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(AppRunning)" IDRETRY check_again
+!endif
 stop_install:
   SetErrorLevel 2
   Abort
@@ -331,6 +392,17 @@ FunctionEnd
 !macroend
 !insertmacro DefineStateFunctions ""
 !insertmacro DefineStateFunctions "un."
+
+; NSIS is a 32-bit process on 64-bit Windows. Use the native Windows PowerShell
+; host so it can inspect the 64-bit installed app, including a hidden tray window.
+Function RequestExitInDirectory
+  Pop $4
+  IfFileExists "$4\AdbDock.exe" request_exit
+  Push 0
+  Return
+request_exit:
+  nsExec::ExecToLog /TIMEOUT=18000 '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\RequestAppExit.ps1" -TargetExecutable "$4\AdbDock.exe" -ExitEventPrefix "${EXIT_EVENT_PREFIX}"'
+FunctionEnd
 
 Function ReadStartupApproval
   Push $0
@@ -372,7 +444,6 @@ Function .onInit
     SetErrorLevel 2
     Abort
   ${EndIf}
-  Call EnsureApplicationClosed
   ; Preserve a user's previous opt-out on an upgrade. A fresh install keeps the
   ; visible startup component selected by default.
   ReadRegStr $0 HKCU "${APP_REG_KEY}" "InstallDir"

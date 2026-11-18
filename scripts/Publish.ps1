@@ -25,12 +25,13 @@ if ($IncludeUiChecks -and -not [Environment]::UserInteractive) {
 }
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'ReleaseVersion.ps1')
 $appProject = Join-Path $projectRoot 'src\AdbDock.App\AdbDock.App.csproj'
 $solution = Join-Path $projectRoot 'AdbDock.sln'
+$releaseVersion = Get-ProjectReleaseVersion -ProjectPath $appProject
+$version = $releaseVersion.Version
+$sourceState = Assert-StableReleaseSource -ProjectRoot $projectRoot -ReleaseVersion $releaseVersion
 $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
-[xml]$project = Get-Content -LiteralPath $appProject -Raw
-$version = [string]($project.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
-if ($version -notmatch '^[0-9A-Za-z.+-]+$') { throw 'The project version cannot be used as a release name.' }
 
 $flavor = if ($SelfContained) { 'self-contained' } else { 'framework-dependent' }
 $releaseName = 'AdbDock-{0}-win-x64-{1}-{2}-{3}' -f $version, $flavor, (Get-Date -Format 'yyyyMMdd-HHmmss'), ([Guid]::NewGuid().ToString('N').Substring(0, 6))
@@ -107,6 +108,7 @@ try {
             throw "Publish output is incomplete: $required. The directory has been retained for inspection."
         }
     }
+    Assert-PayloadReleaseVersion -PayloadDirectory $publishDirectory -ReleaseVersion $releaseVersion
     if ($IncludeUiChecks) {
         $smokeArtifacts = Join-Path $artifactRoot ('release-smoke-' + $releaseName)
         & $uiCheckHost '--smoke' (Join-Path $publishDirectory 'AdbDock.exe') $checkHost $smokeArtifacts
@@ -129,6 +131,12 @@ try {
     $releaseInfo = [ordered]@{
         application = 'ADB Dock'
         version = $version
+        fileVersion = $releaseVersion.FileVersion
+        releaseChannel = $releaseVersion.Channel
+        sourceBranch = $sourceState.Branch
+        sourceCommit = $sourceState.Commit
+        sourceClean = $sourceState.Clean
+        retainedReleaseBranch = $releaseVersion.ReleaseBranch
         runtime = 'win-x64'
         selfContained = [bool]$SelfContained
         builtAt = [DateTimeOffset]::Now.ToString('O')
@@ -157,6 +165,9 @@ Closing the panel hides it; use the tray menu or context menu to exit.
 See README.md and release-info.json for prerequisites and validation limits.
 "@ | Set-Content -LiteralPath (Join-Path $publishDirectory 'START-HERE.txt') -Encoding UTF8
 
+    if ($releaseVersion.IsStable) {
+        [void](Assert-StableReleaseSource -ProjectRoot $projectRoot -ReleaseVersion $releaseVersion -ExpectedCommit $sourceState.Commit)
+    }
     Compress-Archive -LiteralPath $publishDirectory -DestinationPath $archive -CompressionLevel Optimal
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     ('{0}  {1}' -f $hash, [IO.Path]::GetFileName($archive)) | Set-Content -LiteralPath $checksum -Encoding ASCII

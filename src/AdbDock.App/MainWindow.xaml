@@ -1,16 +1,21 @@
 <Window x:Class="AdbDock.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="ADB Dock" Width="380" Height="552" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" ShowActivated="False" UseLayoutRounding="True" SnapsToDevicePixels="True" AutomationProperties.AutomationId="MainWindow" PreviewKeyDown="WindowKeyDown">
-  <Border x:Name="Frame" Background="#FEFDFF" BorderBrush="#E1DCEC" BorderThickness="1" CornerRadius="18" ClipToBounds="True">
+  <Border x:Name="Frame" Background="#FEFDFF" BorderBrush="#E1DCEC" BorderThickness="1" CornerRadius="18" ClipToBounds="True" xmlns:local="clr-namespace:AdbDock.App">
     <Border.ContextMenu><ContextMenu Opened="ContextMenuOpened" Closed="ContextMenuClosed" AutomationProperties.AutomationId="MainContextMenu"><MenuItem Header="显示设备列表" Click="EdgeArrowClick"/><MenuItem Header="设置" Click="OpenSettings"/><Separator/><MenuItem Header="退出 ADB Dock" Click="ExitClick" AutomationProperties.AutomationId="ExitMenuItem"/></ContextMenu></Border.ContextMenu>
     <Grid>
       <Grid x:Name="ExpandedPanel">
         <Grid.RowDefinitions><RowDefinition Height="68"/><RowDefinition Height="*"/><RowDefinition Height="38"/></Grid.RowDefinitions>
-        <Border Background="#FBFAFF" CornerRadius="18,18,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" MouseLeftButtonDown="TitleMouseDown" ToolTip="拖动标题栏到屏幕边缘并松开，即可收起">
+        <Border x:Name="TitleBar" Background="#FBFAFF" CornerRadius="18,18,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" MouseLeftButtonDown="TitleMouseDown">
           <Grid Margin="18,0,12,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center"><TextBlock FontSize="18" FontWeight="SemiBold"><Run Text="ADB" Foreground="{StaticResource Accent}"/><Run Text=" Dock"/></TextBlock><TextBlock Text="{Binding Caption}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-              <Button x:Name="PinButton" Style="{StaticResource HeaderIconButton}" Click="TogglePin" ToolTip="固定展开" AutomationProperties.AutomationId="PinButton" AutomationProperties.Name="固定展开"><Viewbox Width="16" Height="16" IsHitTestVisible="False"><Path x:Name="PinGlyph" Data="{StaticResource PinGlyphGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox></Button>
+              <ToggleButton x:Name="FloatButton" Style="{StaticResource HeaderIconButton}" Checked="FloatingTabChanged" Unchecked="FloatingTabChanged" AutomationProperties.AutomationId="FloatButton" AutomationProperties.Name="显示浮窗">
+                <Viewbox Width="16" Height="16" IsHitTestVisible="False"><Grid Width="24" Height="24">
+                  <Path x:Name="FloatGlyph" Data="{StaticResource FloatingTabGeometry}" Style="{StaticResource ToolbarGlyph}"/>
+                  <Rectangle x:Name="FloatIndicator" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,6,0,0" Width="3" Height="12" RadiusX="1" RadiusY="1" Fill="{StaticResource Accent}"/>
+                </Grid></Viewbox>
+              </ToggleButton>
               <Button x:Name="SettingsButton" Style="{StaticResource HeaderIconButton}" Click="OpenSettings" ToolTip="设置" AutomationProperties.AutomationId="SettingsButton" AutomationProperties.Name="设置"><Viewbox Width="16" Height="16" IsHitTestVisible="False"><Path x:Name="SettingsGlyph" Data="{StaticResource SettingsGlyphGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox></Button>
-              <Button x:Name="CollapseButton" Style="{StaticResource HeaderIconButton}" Click="CollapseClick" ToolTip="收起到屏幕边缘" AutomationProperties.AutomationId="CollapseButton" AutomationProperties.Name="收起"><Viewbox Width="16" Height="16" IsHitTestVisible="False"><Path x:Name="CollapseGlyph" Data="{StaticResource ChevronRightGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox></Button>
+              <Button x:Name="CloseButton" Style="{StaticResource HeaderIconButton}" Click="ClosePanelClick" AutomationProperties.AutomationId="CloseButton" AutomationProperties.Name="关闭面板"><Viewbox Width="16" Height="16" IsHitTestVisible="False"><Path Data="{StaticResource CloseGlyphGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox></Button>
             </StackPanel>
           </Grid>
         </Border>
@@ -35,7 +40,10 @@
             </StackPanel>
             <StackPanel x:Name="DetailPanel" Visibility="Collapsed">
               <DockPanel Margin="0,0,0,14"><Button Content="‹" Style="{StaticResource IconButton}" Click="BackClick" AutomationProperties.AutomationId="BackButton" AutomationProperties.Name="返回设备列表"/><TextBlock Text="设备操作" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0"/></DockPanel>
-              <Border CornerRadius="12" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="14"><StackPanel><TextBlock Text="{Binding Selected.Name}" FontSize="18" FontWeight="SemiBold"/><TextBlock Text="{Binding Selected.Connection}" Foreground="{StaticResource Muted}" Margin="0,5,0,8"/><DockPanel><Button DockPanel.Dock="Right" Content="复制" Click="CopySerialClick" Padding="8,3"/><TextBlock Text="{Binding Selected.Serial}" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" AutomationProperties.AutomationId="SelectedSerial"/></DockPanel></StackPanel></Border>
+              <Border CornerRadius="12" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="14"><StackPanel>
+                <TextBlock Text="当前设备" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/>
+                <local:DevicePicker x:Name="DeviceSwitcher" AutomationProperties.AutomationId="DeviceSwitcher" AutomationProperties.Name="切换操作设备"/>
+                <TextBlock Text="{Binding Selected.Connection}" Foreground="{StaticResource Muted}" Margin="0,5,0,8"/><DockPanel><Button DockPanel.Dock="Right" Content="复制" Click="CopySerialClick" Padding="8,3"/><TextBlock Text="{Binding Selected.Serial}" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" AutomationProperties.AutomationId="SelectedSerial"/></DockPanel></StackPanel></Border>
               <TextBlock Text="常用操作" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,18,0,7"/>
               <UniformGrid x:Name="Actions" Columns="3" Margin="-4,0,-4,0">
                 <Button Style="{StaticResource ActionButton}" Tag="mirror" Click="ActionClick" Background="#F1EEFF" AutomationProperties.AutomationId="MirrorButton"><StackPanel><TextBlock Text="▣" FontSize="24" Foreground="{StaticResource Accent}" HorizontalAlignment="Center"/><TextBlock Text="设备投屏" Margin="0,7,0,0"/></StackPanel></Button>
@@ -52,12 +60,14 @@
         <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="14,2" Background="#FBFAFF" CornerRadius="0,0,18,18"><DockPanel><Button x:Name="ResultButton" DockPanel.Dock="Right" Content="结果" Click="ResultsClick" IsEnabled="False" Padding="7,2" Margin="8,0,0,0" ToolTip="查看、复制或导出最近的操作结果" AutomationProperties.AutomationId="ResultsButton"/><TextBlock Text="{Binding Footer}" Foreground="{Binding FooterTone}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Footer}" AutomationProperties.AutomationId="FooterStatus"/></DockPanel></Border>
       </Grid>
       <StackPanel x:Name="EdgePanel" Visibility="Collapsed" Margin="7,8">
-        <Button x:Name="EdgeSummary" Padding="0" Width="36" Background="Transparent" BorderThickness="0" Cursor="SizeAll" PreviewMouseLeftButtonDown="SummaryMouseDown" PreviewMouseLeftButtonUp="SummaryMouseUp" PreviewMouseMove="SummaryMouseMove" LostMouseCapture="SummaryLostCapture" Click="SummaryKeyboardClick" PreviewKeyDown="SummaryKeyDown" ToolTip="短按展开；长按约 350ms 拖动到四边" AutomationProperties.AutomationId="EdgeSummary" AutomationProperties.Name="ADB 和设备数量，短按展开，长按拖动">
-          <StackPanel><TextBlock Text="ADB" FontSize="8" FontWeight="SemiBold" Foreground="{StaticResource Accent}" HorizontalAlignment="Center"/><StackPanel x:Name="EdgeCounts" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,5,0,3"><TextBlock Text="{Binding OnlineCount}" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="{Binding TotalCount}" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="1,0,0,2"/></StackPanel><TextBlock Text="{Binding ShortStatus}" Foreground="{Binding AggregateTone}" FontSize="8" HorizontalAlignment="Center"/></StackPanel>
-        </Button>
+        <Border x:Name="EdgeSummary" Width="36" Background="Transparent" Focusable="True" Cursor="SizeAll" PreviewMouseLeftButtonDown="SummaryMouseDown" PreviewMouseLeftButtonUp="SummaryMouseUp" PreviewMouseMove="SummaryMouseMove" LostMouseCapture="SummaryLostCapture" PreviewKeyDown="SummaryKeyDown" ToolTip="按住拖动浮窗" AutomationProperties.AutomationId="EdgeSummary" AutomationProperties.Name="ADB 和设备数量，拖动或使用方向键移动浮窗">
+          <StackPanel VerticalAlignment="Center"><TextBlock Text="ADB" FontSize="8" FontWeight="SemiBold" Foreground="{StaticResource Accent}" HorizontalAlignment="Center"/><StackPanel x:Name="EdgeCounts" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,5,0,3"><TextBlock Text="{Binding OnlineCount}" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="{Binding TotalCount}" FontSize="10" Foreground="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="1,0,0,2"/></StackPanel><TextBlock Text="{Binding ShortStatus}" Foreground="{Binding AggregateTone}" FontSize="8" HorizontalAlignment="Center"/></StackPanel>
+        </Border>
         <Border x:Name="EdgeSeparator" Background="{StaticResource Line}" Height="1" Margin="0,8"/>
         <StackPanel x:Name="EdgeDevices"/>
-        <Button x:Name="EdgeArrow" Style="{StaticResource EdgeExpandButton}" Width="36" Height="32" Click="EdgeArrowClick" ToolTip="点击展开设备面板；展开后保持显示" AutomationProperties.AutomationId="EdgeArrow" AutomationProperties.Name="点击展开设备面板"><Viewbox Width="18" Height="18" IsHitTestVisible="False"><Path x:Name="EdgeArrowGlyph" Data="{StaticResource ChevronRightGeometry}" Style="{StaticResource ToolbarGlyph}"><Path.RenderTransform><RotateTransform x:Name="EdgeArrowRotation" Angle="180" CenterX="12" CenterY="12"/></Path.RenderTransform></Path></Viewbox></Button>
+        <Button x:Name="EdgeArrow" Style="{StaticResource EdgeExpandButton}" Width="36" Height="32" Click="EdgeArrowClick" ToolTip="展开设备面板" AutomationProperties.AutomationId="EdgeArrow" AutomationProperties.Name="展开设备面板">
+          <TextBlock x:Name="EdgeExpandLabel" Text="展开" FontSize="12" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+        </Button>
       </StackPanel>
     </Grid>
   </Border>

@@ -24,15 +24,14 @@ if ($IncludeUiChecks -and -not [Environment]::UserInteractive) {
 }
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'ReleaseVersion.ps1')
 $appProject = Join-Path $projectRoot 'src\AdbDock.App\AdbDock.App.csproj'
 $solution = Join-Path $projectRoot 'AdbDock.sln'
 $installerSource = Join-Path $projectRoot 'installer\AdbDock.nsi'
+$releaseVersion = Get-ProjectReleaseVersion -ProjectPath $appProject
+$version = $releaseVersion.Version
+$sourceState = Assert-StableReleaseSource -ProjectRoot $projectRoot -ReleaseVersion $releaseVersion -ExternalPayload:([bool]$PayloadDirectory)
 $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
-[xml]$project = Get-Content -LiteralPath $appProject -Raw
-$versionNode = $project.SelectSingleNode('/Project/PropertyGroup/Version')
-if ($null -eq $versionNode) { throw 'The application project has no Version.' }
-$version = [string]$versionNode.InnerText
-if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') { throw 'The installer requires a numeric application version.' }
 
 $buildId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 6)
 $releaseName = 'AdbDock-{0}-win-x64-Setup-{1}' -f $version, $buildId
@@ -227,10 +226,7 @@ try {
     if (-not ([string]$dependencies.runtimeTarget.name).EndsWith('/win-x64', [StringComparison]::OrdinalIgnoreCase)) {
         throw 'The payload is not published for win-x64.'
     }
-    $payloadVersion = (Get-Item -LiteralPath (Join-Path $payload 'AdbDock.exe')).VersionInfo.ProductVersion
-    if ($payloadVersion -notmatch ('^' + [regex]::Escape($version) + '(?:\+|$)')) {
-        throw 'The payload application version does not match the installer version.'
-    }
+    Assert-PayloadReleaseVersion -PayloadDirectory $payload -ReleaseVersion $releaseVersion
     foreach ($document in (Get-ChildItem -LiteralPath $projectRoot -Filter '*.md' -File)) {
         Copy-Item -LiteralPath $document.FullName -Destination (Join-Path $payload $document.Name) -Force
     }
@@ -301,11 +297,15 @@ try {
     $compilerArguments = @(
         '/INPUTCHARSET', 'UTF8', '/WX', '/V3',
         ('/DAPP_VERSION=' + (ConvertTo-NsisString -Value $version)),
+        ('/DAPP_FILE_VERSION=' + (ConvertTo-NsisString -Value $releaseVersion.FileVersion)),
         ('/DPAYLOAD_DIR=' + (ConvertTo-NsisString -Value $payload)),
         ('/DOUTPUT_FILE=' + (ConvertTo-NsisString -Value $outputFile)),
         ('/DFILE_MANIFEST=' + (ConvertTo-NsisString -Value $manifest)),
         $installerSource
     )
+    if ($releaseVersion.IsStable) {
+        [void](Assert-StableReleaseSource -ProjectRoot $projectRoot -ReleaseVersion $releaseVersion -ExpectedCommit $sourceState.Commit)
+    }
     & $compiler @compilerArguments
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputFile -PathType Leaf)) { throw 'NSIS compilation failed. Staging files have been retained.' }
     $hash = (Get-FileHash -LiteralPath $outputFile -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -313,6 +313,12 @@ try {
     [ordered]@{
         application = 'ADB Dock'
         version = $version
+        fileVersion = $releaseVersion.FileVersion
+        releaseChannel = $releaseVersion.Channel
+        sourceBranch = $sourceState.Branch
+        sourceCommit = $sourceState.Commit
+        sourceClean = $sourceState.Clean
+        retainedReleaseBranch = $releaseVersion.ReleaseBranch
         installer = [IO.Path]::GetFileName($outputFile)
         installerSha256 = $hash
         runtime = 'win-x64'

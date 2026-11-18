@@ -19,11 +19,24 @@ public sealed class SettingsStore
         if (!File.Exists(path)) return new();
         try
         {
-            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), options) ?? new();
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var root = document.RootElement;
+            var settings = root.Deserialize<AppSettings>(options) ?? new();
+            if (root.ValueKind == JsonValueKind.Object &&
+                !root.TryGetProperty(nameof(AppSettings.ShowFloatingTab), out _) &&
+                !root.TryGetProperty(nameof(AppSettings.AutoCollapseDelaySeconds), out _))
+            {
+                // Old versions ignored AutoCollapse and used the header's Pinned preference.
+                // New saves contain the new fields and omit Pinned, so migration runs only once.
+                var wasPinned = root.TryGetProperty("Pinned", out var pinned) && pinned.ValueKind == JsonValueKind.True;
+                settings.AutoCollapse = !wasPinned;
+            }
             settings.AdbPath ??= "";
             settings.ScrcpyPath ??= "";
             if (string.IsNullOrWhiteSpace(settings.ScreenshotDirectory)) settings.ScreenshotDirectory = new AppSettings().ScreenshotDirectory;
             if (!Enum.IsDefined(settings.Side)) settings.Side = DockSide.None;
+            if (settings.AutoCollapseDelaySeconds is < AppSettings.MinimumAutoCollapseDelaySeconds or > AppSettings.MaximumAutoCollapseDelaySeconds)
+                settings.AutoCollapseDelaySeconds = AppSettings.DefaultAutoCollapseDelaySeconds;
             return settings;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -35,6 +48,9 @@ public sealed class SettingsStore
     }
     public void Save(AppSettings settings)
     {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.AutoCollapseDelaySeconds is < AppSettings.MinimumAutoCollapseDelaySeconds or > AppSettings.MaximumAutoCollapseDelaySeconds)
+            throw new ArgumentOutOfRangeException(nameof(settings), "自动收起等待时间必须为 1 至 300 秒。");
         lock (gate)
         {
             Directory.CreateDirectory(DirectoryPath);

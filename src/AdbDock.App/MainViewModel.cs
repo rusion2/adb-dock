@@ -14,7 +14,7 @@ public sealed class DeviceRow
     public DeviceRow(AdbDevice device) => Device = device;
     public string Serial => Device.Serial;
     public string Name => Device.Name;
-    public string Connection => Device.Connection;
+    public string Connection => Device.Connection == "未知" ? "连接方式未识别" : Device.Connection;
     public string Status => Device.StatusLabel;
     public string Marker => Device.Marker;
     public bool IsOnline => Device.IsOnline;

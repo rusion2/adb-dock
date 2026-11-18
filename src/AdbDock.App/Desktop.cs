@@ -17,6 +17,8 @@ public struct NativeRect
     public int Left, Top, Right, Bottom;
     public readonly int Width => Right - Left;
     public readonly int Height => Bottom - Top;
+    public readonly bool Contains(NativePoint point) =>
+        point.X >= Left && point.X < Right && point.Y >= Top && point.Y < Bottom;
     public NativeRect(int x, int y, int width, int height) { Left = x; Top = y; Right = x + width; Bottom = y + height; }
 }
 

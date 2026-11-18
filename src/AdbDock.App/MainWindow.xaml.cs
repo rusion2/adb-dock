@@ -39,6 +39,14 @@ public partial class MainWindow : Window
         settings = store.Load();
         SyncStartupState();
         InitializeComponent();
+        DeviceSwitcher.DeviceChosen += serial =>
+        {
+            var target = model.Devices.FirstOrDefault(row => row.IsOnline && row.Serial == serial);
+            if (target is null) return;
+            model.Select(target);
+            UpdateView();
+        };
+        DeviceSwitcher.DropDownClosed += (_, _) => outsideSince = null;
         Icon = AppIcon.CreateWindowIcon();
         DataContext = model;
         Topmost = settings.Topmost;
@@ -63,7 +71,8 @@ public partial class MainWindow : Window
         menu.Opened += (_, _) => SetMenuInteraction(menu, true);
         menu.Closed += (_, _) => SetMenuInteraction(menu, false);
         menu.Items.Add("显示设备面板", null, (_, _) => Dispatcher.BeginInvoke(ShowFromTray));
-        menu.Items.Add("收起到屏幕边缘", null, (_, _) => Dispatcher.BeginInvoke(() => { Show(); CollapsePanel(true); }));
+        var collapseItem = menu.Items.Add("收起到屏幕边缘", null, (_, _) => Dispatcher.BeginInvoke(() => { Show(); CollapsePanel(); }));
+        menu.Opening += (_, _) => collapseItem.Enabled = settings.ShowFloatingTab && !collapsed;
         menu.Items.Add("设置", null, (_, _) => Dispatcher.BeginInvoke(() => { ShowFromTray(); OpenSettings(this, new RoutedEventArgs()); }));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出 ADB Dock", null, (_, _) => Dispatcher.BeginInvoke(async () => await ExitAsync()));
@@ -100,6 +109,7 @@ public partial class MainWindow : Window
             });
             await adb.StartAsync(lifetime.Token);
         }
+        catch (OperationCanceledException) when (exiting) { }
         catch (Exception ex) when (!exiting)
         {
             model.Apply(new(Array.Empty<AdbDevice>(), ex.Message));
@@ -123,17 +133,23 @@ public partial class MainWindow : Window
     {
         ListPanel.Visibility = model.Selected is null ? Visibility.Visible : Visibility.Collapsed;
         DetailPanel.Visibility = model.Selected is null ? Visibility.Collapsed : Visibility.Visible;
+        DeviceSwitcher.SetDevices(model.Devices.Where(row => row.IsOnline), model.Selected?.Serial);
         EmptyPanel.Visibility = model.HasDevices ? Visibility.Collapsed : Visibility.Visible;
         ListLabel.Visibility = model.HasDevices ? Visibility.Visible : Visibility.Collapsed;
         Actions.IsEnabled = model.Selected is { IsOnline: true } selected && !busy.Contains(selected.Serial) && operations is not null;
-        PinButton.Background = settings.Pinned ? (Brush)FindResource("AccentTint") : Brushes.Transparent;
-        PinButton.Foreground = settings.Pinned ? (Brush)FindResource("Accent") : (Brush)FindResource("Muted");
-        PinButton.BorderBrush = settings.Pinned ? (Brush)FindResource("Accent") : Brushes.Transparent;
-        PinButton.BorderThickness = new Thickness(settings.Pinned ? 1 : 0);
-        PinButton.ToolTip = settings.Pinned ? "取消固定展开" : "固定展开";
-        System.Windows.Automation.AutomationProperties.SetName(PinButton, settings.Pinned ? "取消固定展开" : "固定展开");
-        System.Windows.Automation.AutomationProperties.SetItemStatus(PinButton, settings.Pinned ? "已固定，已选中" : "未固定，未选中");
+        var showTab = settings.ShowFloatingTab;
+        FloatButton.IsChecked = showTab;
+        FloatButton.Background = showTab ? (Brush)FindResource("AccentTint") : Brushes.Transparent;
+        FloatButton.Foreground = (Brush)FindResource(showTab ? "Accent" : "Muted");
+        FloatButton.BorderBrush = showTab ? FloatButton.Foreground : Brushes.Transparent;
+        FloatButton.BorderThickness = new Thickness(showTab ? 1 : 0);
+        FloatIndicator.Visibility = showTab ? Visibility.Visible : Visibility.Hidden;
+        FloatButton.ToolTip = showTab ? "显示浮窗（已开启）" : "显示浮窗（已关闭）";
+        CloseButton.ToolTip = showTab ? "关闭面板并显示侧边浮窗" : "关闭面板，保留托盘图标";
+        TitleBar.ToolTip = showTab ? "拖向屏幕边缘并松开即可收起" : "拖动可移动面板";
         RenderEdge();
+        RefreshDevicePreview();
+        UpdateLeaveTimer();
     }
 
     private void DeviceClick(object sender, RoutedEventArgs e)
@@ -173,8 +189,13 @@ public partial class MainWindow : Window
     }
     private async void ActionClick(object sender, RoutedEventArgs e)
     {
-        if (model.Selected is not { IsOnline: true } row || operations is not { } service) return;
-        var action = ((Button)sender).Tag as string;
+        if (model.Selected is { } row && ((Button)sender).Tag is string action)
+            await RunDeviceActionAsync(row, action, this);
+    }
+
+    private async Task RunDeviceActionAsync(DeviceRow row, string action, Window owner)
+    {
+        if (!row.IsOnline || operations is not { } service) return;
         if (action == "mirror")
         {
             await ExecuteAsync(row, "启动投屏", async token =>
@@ -197,29 +218,33 @@ public partial class MainWindow : Window
         }
         else if (action == "screenshot")
         {
-            await SaveScreenshotAsync(row);
+            await SaveScreenshotAsync(row, owner);
         }
         else if (action == "install")
         {
             var picker = new OpenFileDialog { Title = "选择要安装到 " + row.Name + " 的 APK", Filter = "Android 安装包|*.apk", CheckFileExists = true, Multiselect = false };
+            outsideSince = null;
             interactionDepth++;
             bool? result;
-            try { result = picker.ShowDialog(this); } finally { interactionDepth--; }
+            try { result = picker.ShowDialog(owner); } finally { interactionDepth--; previewOutsideSince = null; }
             if (result != true) return;
             await ExecuteAsync(row, "安装 APK", token => service.InstallAsync(row.Serial, picker.FileName, token), "安装成功 · " + Path.GetFileName(picker.FileName));
         }
         else if (action == "info")
         {
             string? text = null;
-            if (await ExecuteAsync(row, "读取设备信息", async token => text = await service.ReadInfoAsync(row.Serial, token), "设备信息读取完成", detail: () => text))
-                ShowOwned(new DeviceInfoWindow(row.Serial, service, text!));
+            if (await ExecuteAsync(row, "读取设备信息", async token => text = await service.ReadInfoAsync(row.Serial, token), "设备信息读取完成", detail: () => text)
+                && owner.IsVisible && (owner is DevicePreviewWindow preview
+                    ? preview.Row.Serial == row.Serial
+                    : !collapsed && model.Selected?.Serial == row.Serial))
+                ShowOwned(new DeviceInfoWindow(row.Serial, service, text!), owner);
         }
         else if (action == "keys")
         {
             var dialog = new KeysWindow(row.Name, key => ExecuteAsync(row, "发送按键 " + key, token => service.SendKeyAsync(row.Serial, key, token), "按键已发送 · " + key), row.Serial);
-            ShowOwned(dialog);
+            ShowOwned(dialog, owner);
         }
-        else if (action == "logcat") ShowOwned(new LogWindow(row.Serial, service));
+        else if (action == "logcat") ShowOwned(new LogWindow(row.Serial, service), owner);
     }
 
     private async Task<bool> ExecuteAsync(DeviceRow device, string label, Func<CancellationToken, Task> action, string success,
@@ -268,14 +293,19 @@ public partial class MainWindow : Window
         try
         {
             if (value.AutoStart != settings.AutoStart) Desktop.ConfigureStartup(value.AutoStart);
+            var toolsChanged = settings.AdbPath != value.AdbPath || settings.ScrcpyPath != value.ScrcpyPath;
             settings.AdbPath = value.AdbPath;
             settings.ScrcpyPath = value.ScrcpyPath;
             settings.ScreenshotDirectory = value.ScreenshotDirectory;
             settings.Topmost = value.Topmost;
+            settings.AutoCollapse = value.AutoCollapse;
+            settings.AutoCollapseDelaySeconds = value.AutoCollapseDelaySeconds;
             SyncStartupState();
             Topmost = value.Topmost;
+            outsideSince = null;
+            UpdateView();
             SaveSettings();
-            await RestartServicesAsync();
+            if (toolsChanged) await RestartServicesAsync();
         }
         catch (Exception ex) { ReportError(ex); }
     }
@@ -293,11 +323,12 @@ public partial class MainWindow : Window
         if (!model.AdbAvailable) OpenSettings(sender, e);
         else ShowText("连接 Android 设备", "1. 在手机开发者选项中开启 USB 调试。\n2. 使用支持数据传输的 USB 线连接电脑。\n3. 解锁手机，允许此电脑进行 USB 调试。\n4. 点击刷新；网络设备请先通过 ADB 建立连接。\n\n本程序不会自动重启共享 ADB 服务。");
     }
-    private bool? ShowOwned(Window dialog)
+    private bool? ShowOwned(Window dialog, Window? owner = null)
     {
         var previousFocus = Keyboard.FocusedElement;
+        outsideSince = null;
         interactionDepth++;
-        dialog.Owner = this;
+        dialog.Owner = owner ?? this;
         dialog.WindowStartupLocation = WindowStartupLocation.CenterOwner;
         dialog.Topmost = Topmost;
         FitDialog(dialog, Desktop.WorkArea(this), Desktop.Scale(this));
@@ -313,12 +344,13 @@ public partial class MainWindow : Window
         {
             dialog.Loaded -= onLoaded;
             interactionDepth--;
+            previewOutsideSince = null;
             if (!exiting && IsVisible)
             {
                 if (previousFocus is UIElement element && element.IsVisible && element.IsEnabled && element.Focusable)
                     Keyboard.Focus(element);
                 else if (collapsed) EdgeSummary.Focus();
-                else CollapseButton.Focus();
+                else CloseButton.Focus();
             }
         }
     }
@@ -340,12 +372,14 @@ public partial class MainWindow : Window
         if (isOpen)
         {
             if (!openMenus.Add(menu)) return;
+            outsideSince = null;
             interactionDepth++;
         }
         else
         {
             if (!openMenus.Remove(menu)) return;
             interactionDepth--;
+            previewOutsideSince = null;
         }
     }
     private void ShowText(string title, string text) => ShowOwned(new TextWindow(title, text));
@@ -370,6 +404,7 @@ public partial class MainWindow : Window
     }
     public void ShowFromTray()
     {
+        if (exiting) return;
         Show();
         ExpandPanel(true);
         Desktop.Clamp(this);
@@ -378,17 +413,21 @@ public partial class MainWindow : Window
     {
         if (exiting) return;
         e.Cancel = true;
-        pressTimer.Stop();
         if (pressStart is not null) FinishPress(true);
-        SaveSettings(); Hide();
+        if (interactionDepth > 0 || titleDragging) return;
+        devicePreview?.Close();
+        if (settings.ShowFloatingTab && !collapsed) CollapsePanel();
+        else { SaveSettings(); Hide(); }
     }
     private async void ExitClick(object sender, RoutedEventArgs e) => await ExitAsync();
-    private async Task ExitAsync()
+    internal async Task ExitAsync()
     {
         if (exiting) return;
         exiting = true;
+        devicePreview?.Close();
+        UpdateLeaveTimer();
         SaveSettings();
-        pressTimer.Stop();
+        if (pressStart is not null) FinishPress(true);
         lifetime.Cancel();
         await restartGate.WaitAsync();
         try { await StopServicesAsync(); }

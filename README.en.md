@@ -8,18 +8,22 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code> · <code>v0.1.2</code></p>
+<p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code> · <code>v0.1.3-beta.2</code></p>
 
 <p align="center">
-  <a href="#quick-start">Get started</a> · <a href="#preview">Screenshots</a> · <a href="#usage">Usage</a> · <a href="#development">Build from source</a> · <a href="#packaging">Packaging</a>
+  <a href="#quick-start">Get started</a> · <a href="#upgrade">Upgrade</a> · <a href="#preview">Screenshots</a> · <a href="#usage">Usage</a> · <a href="#development">Build from source</a> · <a href="#packaging">Packaging</a>
 </p>
 
 ADB Dock is a local Windows companion for Android devices. Check connection status, choose a device, then mirror its screen, save a screenshot, install an APK, send a basic key event, or inspect logs. It switches between a device panel and a compact edge tab, with no account or backend service required.
 
+**New in `v0.1.3-beta.2`** — the installer can now close a running copy of ADB Dock during an upgrade, even when it is in the system tray. [Upgrade instructions](#upgrade)
+
+Earlier `0.1.x` packages are test builds, including those without a beta suffix. Each future stable release will have its own `release/vX.Y.Z` branch and matching `vX.Y.Z` tag. [Versioning policy](VERSIONING.md)
+
 ## Features
 
 - **Clear device status**: distinguish online, unauthorized, offline, no devices, and ADB failures, with separate online and discovered counts.
-- **Four-edge docking and a system tray**: click to expand and keep the panel open; when unpinned, drag to an edge and release to collapse. The pin button has a distinct selected state.
+- **Four-edge docking and a system tray**: the floating tab is enabled by default. Closing the panel returns to the edge tab when enabled, or hides it to the tray when disabled. Automatic collapse has its own switch and adjustable delay.
 - **Six everyday tools**: scrcpy mirroring, PNG screenshots, APK installation, Home / Back / Recent / Wake keys, device information, and Logcat. Every device action targets the selected serial number.
 - **Regex log filtering**: retain up to 20,000 recent lines, filter or clear the view, pause display, copy, and export.
 - **Whole-device monitoring**: manually start or pause CPU, memory, battery level, and battery-temperature sampling from device information.
@@ -47,12 +51,19 @@ These are native WPF windows with fixture devices, logs, and metrics. The applic
 <a id="quick-start"></a>
 ## Get started
 
-The repository currently contains source code and packaging scripts; no GitHub Release has been published yet. [Build from source](#development) or [generate a package](#packaging) locally. Check the [Releases page](https://github.com/rusion2/adb-dock/releases) for published packages.
+Check GitHub Releases for published packages. You can also run the app from source or build an installer or portable ZIP locally. [GitHub Releases](https://github.com/rusion2/adb-dock/releases) · [Build from source](#development) · [Build packages locally](#packaging)
 
 - **Installer**: run the generated `*win-x64-Setup*.exe`. It installs to `%LOCALAPPDATA%\Programs\AdbDock` by default, includes the .NET 10 runtime, and adds Start menu and uninstall entries. A desktop shortcut is optional.
 - **Portable**: extract the entire ZIP, then run `AdbDock.exe`. The default portable package requires the **Windows x64 .NET 10 Desktop Runtime**; a `self-contained` package includes its runtime.
 
-On a first installation, “Start ADB Dock when I sign in to Windows” is selected by default. You can disable it in the wizard or application settings; upgrades preserve a previous opt-out. Exit the existing instance from the tray before updating or uninstalling.
+On a first installation, “Start ADB Dock when I sign in to Windows” is selected by default. You can turn it off in the wizard or later in Settings.
+
+<a id="upgrade"></a>
+### Upgrade an existing installation
+
+1. Run the new Windows x64 installer. Your current session stays open while you choose the installation options.
+2. Click **Install**. Setup asks the installed copy to quit, including when its panel is hidden in the tray. It waits for the process to exit before replacing files. If setup reports that ADB Dock is still running, finish any open operation, choose **退出 ADB Dock** (Exit ADB Dock) from its tray menu, then click **Retry**.
+3. Launch ADB Dock and check the version at the bottom of Settings. The upgrade preserves your settings, screenshots, and previous sign-in startup choice.
 
 ### Configure ADB and scrcpy
 
@@ -95,12 +106,15 @@ APK installation and key events act on the selected device. Check its serial num
 
 ### Desktop controls
 
-- **Expand**: click the edge arrow, ADB/count area, or a device icon. Hovering does not open the panel. Once open, it stays visible when the pointer leaves or focus changes.
-- **Collapse**: when unpinned, drag the title bar to any screen edge and release. Releasing in the middle keeps the panel open. The title bar and tray also provide explicit collapse actions.
-- **Pin open**: the selected pin has a purple background and border. A pinned panel stays open even after an edge drag. Unpinning does not immediately collapse it; manual collapse clears the pin.
-- **Move the edge tab**: hold the ADB/count area for about 350 ms and drag, or focus it and use the arrow keys to choose an edge.
-- **Inspect results**: the bottom results button retains the latest 20 operation results for the current run. Copy, export, or open the latest screenshot; device refreshes do not clear them.
-- **Exit**: closing the main window hides it to the tray. Use “退出 ADB Dock” to quit. The settings footer shows the current version.
+- Click **展开** (Expand) at the end of the edge tab to open the full device list.
+- Click a device icon on the tab, or swipe left from the icon, to open its **preview**. It appears to the left when space permits, with the tab still visible. Move the pointer between the two to keep the preview open. It closes **5 seconds** after you leave both. Using its device selector, a menu, or a dialog pauses the countdown.
+- **Switch devices** using the name and serial number at the top of either window. The full action panel lists online devices. The preview has its own selector for all discovered devices, including offline or unauthorized devices that need attention. New actions use the serial number selected in that window. Operations already in progress keep their original target.
+- Use the title-bar **显示浮窗** (Show floating tab) switch to choose where the close button sends the panel. With the switch on, closing the panel returns it to the edge tab. With the switch off, closing hides it in the tray. Double-click the tray icon to reopen the panel.
+- **Automatic collapse** applies to the full panel when the floating tab is enabled. The default is **2 seconds**. In Settings you can turn it off or choose **1–300 seconds**, then click Save. The countdown starts when the pointer leaves both the panel and the tab’s original location. Returning to either cancels it. Dragging and interacting with a menu, dialog, or file picker pause it.
+- **Move the edge tab** by dragging the ADB/device-count area. Movement begins as soon as the pointer crosses the Windows drag threshold. Releasing in place keeps the tab compact. With keyboard focus on that area, use the arrow keys to choose a screen edge. To dock the full panel manually, enable the floating tab, drag the title bar toward any screen edge, and release.
+- **结果** (Results) holds the latest 20 operation results for this session. Use it to copy or export results, or open the most recent screenshot. To quit the application, choose **退出 ADB Dock** from the tray or context menu. The Settings footer shows the running version.
+
+The native app saves these preferences locally. In the browser prototype, they last until you reload the page.
 
 ### Log filtering
 
@@ -124,7 +138,7 @@ Pausing, closing the window, or disconnecting the device stops sampling. Reconne
 
 Settings and local error logs are stored in `%LOCALAPPDATA%\AdbDock` by default. Portable and source builds do not register sign-in startup automatically; installed builds follow the wizard and Settings selection. Sign-in startup does not restart the application after a crash.
 
-Uninstall through Windows Installed apps or the Start menu. Removal deletes bundled application files, shortcuts, and the matching startup entry, while retaining user settings, logs, screenshots, and unrelated files added to the installation directory. Quitting stops only this application's client sessions, leaving the shared ADB server running.
+Exit ADB Dock from its tray menu before uninstalling through Windows Installed apps or the Start menu. Removal deletes bundled application files, shortcuts, and the matching startup entry, while retaining user settings, logs, screenshots, and unrelated files added to the installation directory. Quitting stops only this application's client sessions, leaving the shared ADB server running.
 
 <a id="development"></a>
 ## Build from source
@@ -149,7 +163,7 @@ After building, run the core checks without a third-party test framework:
 <details>
 <summary>Native UI, startup registration, and installer checks</summary>
 
-UI checks require an interactive Windows desktop. Exit other ADB Dock instances in the same user session first. Tests use fixture devices and isolated settings, without installing applications or sending keys to real phones.
+UI checks require an interactive Windows desktop. They use a separate instance identity, fixture devices, and isolated settings, so they can run alongside the installed client without installing applications or sending keys to real phones. Published startup and single-instance smoke checks still use the production entry point; exit the existing client from the tray before running those checks.
 
 ```powershell
 $fixture = (Resolve-Path '.\tests\AdbDock.Checks\bin\Release\net10.0\AdbDock.Checks.exe').Path
@@ -168,7 +182,7 @@ Startup checks use temporary registry keys and do not change the real startup en
 
 </details>
 
-For v0.1.2, **34 core checks, 24 native UI checks, and 8 isolated installer lifecycle checks have passed**. Automated checks do not replace real-device or mixed-DPI testing. See the [development record](开发进度.md) for the precise validation scope.
+**`v0.1.3-beta.2` passed 34 core checks, 25 native WPF checks, and 11 isolated installer checks.** Upgrade verification covered a running `0.1.2` client and a `0.1.3-beta.1` client hidden in the tray. Installer checks also confirmed that an unresponsive client stops the upgrade before any application files are replaced. [Development record](开发进度.md)
 
 <a id="packaging"></a>
 ## Packaging

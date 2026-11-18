@@ -17,20 +17,101 @@ const deviceStates = {
   offline: { label: "离线", tone: "gray", marker: "−" },
 };
 const scenarios = { healthy: ["pixel", "xiaomi"], mixed: ["pixel", "xiaomi", "samsung"], offline: ["pixel", "oneplus"], empty: [], error: [] };
-const state = { scenario: "mixed", selected: null, pinned: false, collapsed: false, side: null, edgeOffset: null, topmost: true, task: null, generation: 0 };
+const commonActions = [["mirror", "mirror", "设备投屏", "primary-action"], ["screenshot", "camera", "截图保存", ""], ["install", "install", "安装 APK", ""], ["keys", "grid", "按键控制", ""], ["info", "info", "设备信息", ""], ["logcat", "log", "查看日志", ""]];
+const state = { scenario: "mixed", selected: null, previewDevice: null, showFloatingTab: true, autoCollapseEnabled: true, collapseDelaySeconds: 2, collapsed: false, hiddenToTray: false, side: null, edgeOffset: null, topmost: true, task: null, generation: 0 };
 const desktop = $("#desktop");
 const dock = $("#dock");
 const edgeTab = $("#edge-tab");
+const devicePreview = $("#device-preview");
 const dialog = $("#action-dialog");
 let toastTimer;
 let drag = null;
 let edgePress = null;
-let longPressTimer;
-let suppressEdgeClick = false;
+let iconSwipe = null;
 let filePickerOpen = false;
 let fileTarget = null;
 let dialogReturnFocus = null;
 let initialized = false;
+let collapseTimer = null;
+let pointerPosition = null;
+let pointerOutsideDocument = false;
+let openerBounds = null;
+let contextMenuOpen = false;
+let previewTimer = null;
+
+function stopAutoCollapse() {
+  clearTimeout(collapseTimer);
+  collapseTimer = null;
+}
+
+function pointerInsideBounds(...rectangles) {
+  if (pointerOutsideDocument) return false;
+  if (!pointerPosition) return true;
+  const inside = (rect) => rect && pointerPosition.x >= rect.left && pointerPosition.x <= rect.right && pointerPosition.y >= rect.top && pointerPosition.y <= rect.bottom;
+  return rectangles.some(inside);
+}
+
+function pointerInsidePanel() {
+  return pointerInsideBounds(dock.getBoundingClientRect(), openerBounds);
+}
+
+function refreshPreviewDismissal(freshGrace = false) {
+  if (freshGrace) { clearTimeout(previewTimer); previewTimer = null; }
+  const paused = !state.previewDevice || devicePreview.hidden || !state.collapsed || dialog.open || filePickerOpen || drag || edgePress || iconSwipe || contextMenuOpen;
+  if (paused || pointerInsideBounds(edgeTab.getBoundingClientRect(), devicePreview.getBoundingClientRect())) {
+    clearTimeout(previewTimer); previewTimer = null; return;
+  }
+  if (previewTimer !== null) return;
+  previewTimer = setTimeout(() => {
+    previewTimer = null;
+    if (state.previewDevice && !dialog.open && !filePickerOpen && !drag && !edgePress && !iconSwipe && !contextMenuOpen && !pointerInsideBounds(edgeTab.getBoundingClientRect(), devicePreview.getBoundingClientRect())) closeDevicePreview();
+  }, 5000);
+}
+
+function refreshAutoCollapse(freshGrace = false) {
+  refreshPreviewDismissal(freshGrace);
+  if (freshGrace) stopAutoCollapse();
+  const paused = state.collapsed || state.hiddenToTray || !state.showFloatingTab || !state.autoCollapseEnabled || dialog.open || filePickerOpen || drag || edgePress || iconSwipe || contextMenuOpen;
+  if (paused || pointerInsidePanel()) { stopAutoCollapse(); return; }
+  if (collapseTimer !== null) return;
+  collapseTimer = setTimeout(() => {
+    collapseTimer = null;
+    if (!state.collapsed && !state.hiddenToTray && state.showFloatingTab && state.autoCollapseEnabled && !dialog.open && !filePickerOpen && !drag && !edgePress && !iconSwipe && !contextMenuOpen && !pointerInsidePanel()) collapse();
+  }, state.collapseDelaySeconds * 1000);
+}
+
+function recordPointer(event) {
+  pointerPosition = { x: event.clientX, y: event.clientY };
+  pointerOutsideDocument = false;
+}
+
+function handlePointer(event) {
+  recordPointer(event);
+  const menuWasOpen = contextMenuOpen;
+  contextMenuOpen = false;
+  refreshAutoCollapse(menuWasOpen);
+}
+["pointermove", "pointerdown", "pointerover"].forEach((type) => document.addEventListener(type, handlePointer, true));
+document.addEventListener("pointerout", (event) => {
+  if (event.relatedTarget !== null) return;
+  pointerOutsideDocument = true;
+  refreshAutoCollapse();
+});
+document.addEventListener("contextmenu", (event) => {
+  if (!dock.contains(event.target) && !edgeTab.contains(event.target) && !devicePreview.contains(event.target)) return;
+  contextMenuOpen = true;
+  refreshAutoCollapse(true);
+});
+document.addEventListener("keydown", () => {
+  if (!contextMenuOpen) return;
+  contextMenuOpen = false;
+  refreshAutoCollapse(true);
+});
+window.addEventListener("focus", () => {
+  const menuWasOpen = contextMenuOpen;
+  contextMenuOpen = false;
+  refreshAutoCollapse(menuWasOpen);
+});
 
 function currentDevices() {
   return scenarios[state.scenario].map((id) => devices[id]);
@@ -81,24 +162,38 @@ function listMarkup() {
 }
 
 function detailMarkup(device) {
-  const actions = [
-    ["mirror", "mirror", "设备投屏", "primary-action"],
-    ["screenshot", "camera", "截图保存", ""],
-    ["install", "install", "安装 APK", ""],
-    ["keys", "grid", "按键控制", ""],
-    ["info", "info", "设备信息", ""],
-    ["logcat", "log", "查看日志", ""],
-  ];
   return `<div class="detail-heading"><button class="icon-button" id="back-button" aria-label="返回设备列表">${icon("back")}</button><h2>设备操作</h2><span>已绑定当前设备</span></div>
+    ${deviceSelectorMarkup("operation-device-select", device.id, true)}
     <div class="device-detail-card"><span class="device-avatar ${device.avatar}">${icon("device")}</span><div><div class="detail-device-name">${device.name}</div><div class="detail-meta"><span class="status-dot green"></span><span>在线</span><span>·</span><span>${device.android}</span><span>·</span><span>${device.connection}</span></div><div class="detail-serial"><span>${device.serial}</span><button class="icon-button" id="copy-serial" aria-label="复制设备序列号" title="复制序列号">${icon("copy")}</button></div></div></div>
-    <p class="action-section-label">常用操作</p><div class="action-grid">${actions.map(([action, image, label, className]) => `<button class="device-action ${className}" data-action="${action}" ${state.task?.deviceId === device.id ? "disabled" : ""}>${icon(image)}<span>${label}</span></button>`).join("")}</div>
+    <p class="action-section-label">常用操作</p><div class="action-grid">${commonActions.map(([action, image, label, className]) => `<button class="device-action ${className}" data-action="${action}" ${state.task?.deviceId === device.id ? "disabled" : ""}>${icon(image)}<span>${label}</span></button>`).join("")}</div>
     <div class="operation-note">${icon("info")}<span>仅操作当前设备。投屏由 scrcpy 打开独立窗口；原型不会执行真实命令。</span></div>`;
+}
+
+function deviceSelectorMarkup(id, selected, onlineOnly = false) {
+  const options = currentDevices().filter((device) => !onlineOnly || device.state === "online");
+  return `<label class="device-selector" for="${id}"><span>切换设备</span><select id="${id}" aria-label="切换操作设备">${options.map((device) => `<option value="${escapeHTML(device.id)}" ${device.id === selected ? "selected" : ""}>${escapeHTML(device.name)} · ${escapeHTML(device.serial)}${onlineOnly ? "" : ` · ${deviceStates[device.state].label}`}</option>`).join("")}</select></label>`;
+}
+
+function bindDeviceSelector(select, change) {
+  if (!select) return;
+  select.addEventListener("pointerdown", () => { contextMenuOpen = true; refreshAutoCollapse(true); });
+  select.addEventListener("keydown", (event) => {
+    if (event.key !== " " && !(event.altKey && event.key === "ArrowDown")) return;
+    contextMenuOpen = true;
+    refreshAutoCollapse(true);
+  });
+  select.addEventListener("change", () => {
+    contextMenuOpen = false;
+    change(select.value);
+    refreshAutoCollapse(true);
+  });
+  select.addEventListener("blur", () => { contextMenuOpen = false; refreshAutoCollapse(true); });
 }
 
 function render() {
   const device = currentDevice();
   $("#dock-content").innerHTML = device ? detailMarkup(device) : listMarkup();
-  $("#view-caption").textContent = state.collapsed ? "贴边状态" : device ? "设备操作" : "设备面板";
+  $("#view-caption").textContent = state.hiddenToTray ? "托盘隐藏" : state.collapsed ? "贴边状态" : device ? "设备操作" : "设备面板";
   $$(".scenario").forEach((button) => {
     const selected = button.dataset.scenario === state.scenario;
     button.classList.toggle("selected", selected);
@@ -106,6 +201,7 @@ function render() {
   });
   renderEdge();
   bindContent();
+  if (state.previewDevice) renderDevicePreview();
 }
 
 function renderEdge() {
@@ -122,16 +218,71 @@ function renderEdge() {
   $("#edge-count").innerHTML = error ? "—" : `${online}<span>/${list.length}</span>`;
   $(".edge-state .status-dot").className = `status-dot ${error ? "red" : !list.length ? "gray" : warning ? "amber" : "green"}`;
   const description = error ? "ADB 异常，设备数量未知" : `${online} 台在线，共发现 ${list.length} 台${warning ? "，有设备需要处理" : ""}`;
-  edgeTab.setAttribute("aria-label", `${description}；每个图标对应一台设备，长按ADB 和数量区域可拖到四边`);
-  $("#edge-expand-button").setAttribute("aria-label", `${description}，短按展开、长按拖动，方向键切换停靠边`);
+  edgeTab.setAttribute("aria-label", `${description}；每个图标对应一台设备，按住 ADB 和数量区域并移动可拖到四边`);
+  $("#edge-expand-button").setAttribute("aria-label", `${description}，仅用于拖动，点击不展开，按住移动即拖动，方向键切换停靠边`);
   $("#edge-device-list").innerHTML = error || !list.length
     ? `<button class="edge-placeholder ${error ? "error" : ""}" data-edge-placeholder="${error ? "error" : "empty"}" aria-label="${error ? "ADB 异常，检查设置" : "未发现设备，查看连接指引"}">${icon(error ? "warning" : "usb")}</button>`
     : list.slice(0, visibleCount).map((device) => {
       const status = deviceStates[device.state];
-      const label = `${device.name}，${status.label}，${device.connection}，${device.serial}`;
+      const label = `${device.name}，${status.label}，${device.connection}，${device.serial}；点击或向左滑动预览此设备操作`;
       return `<button class="edge-device-button ${device.state}" data-edge-device="${escapeHTML(device.id)}" aria-label="${escapeHTML(label)}"><svg aria-hidden="true"><use href="#i-device"/></svg><span class="edge-device-marker" aria-hidden="true">${status.marker}</span><span class="edge-tooltip" aria-hidden="true"><b>${escapeHTML(device.name)}</b><em>${status.label} · ${device.connection}</em><small>${escapeHTML(device.serial)}</small></span></button>`;
     }).join("") + (list.length > visibleCount ? `<button class="edge-more" data-edge-more aria-label="另有 ${list.length - visibleCount} 台设备，展开全部设备">+${list.length - visibleCount}</button>` : "");
   if (state.collapsed && !edgePress?.active) positionEdge();
+  if (state.previewDevice) positionDevicePreview();
+}
+
+function closeDevicePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = null;
+  state.previewDevice = null;
+  devicePreview.hidden = true;
+}
+
+function positionDevicePreview() {
+  if (!state.previewDevice || devicePreview.hidden) return;
+  const tabLeft = edgeTab.offsetLeft;
+  const tabRight = tabLeft + edgeTab.offsetWidth;
+  devicePreview.style.width = `${Math.min(300, desktop.clientWidth - 16)}px`;
+  const width = devicePreview.offsetWidth;
+  const height = devicePreview.offsetHeight;
+  const workHeight = desktop.clientHeight - 48;
+  let x;
+  let y = edgeTab.offsetTop + edgeTab.offsetHeight / 2 - height / 2;
+  if (tabLeft >= width) x = tabLeft - width;
+  else if (desktop.clientWidth - tabRight >= width) x = tabRight;
+  else {
+    x = Math.max(8, Math.min(desktop.clientWidth - width - 8, tabLeft + edgeTab.offsetWidth / 2 - width / 2));
+    const below = edgeTab.offsetTop + edgeTab.offsetHeight;
+    y = below + height <= workHeight ? below : edgeTab.offsetTop - height;
+  }
+  devicePreview.style.left = `${x}px`;
+  devicePreview.style.top = `${Math.max(0, Math.min(Math.max(0, workHeight - height), y))}px`;
+}
+
+function renderDevicePreview() {
+  const device = currentDevices().find((item) => item.id === state.previewDevice);
+  if (!device || !state.collapsed || !state.showFloatingTab) { closeDevicePreview(); return; }
+  const status = deviceStates[device.state];
+  devicePreview.innerHTML = `<div class="preview-heading"><div><strong id="device-preview-title">${escapeHTML(device.name)}</strong><small>${status.label} · ${escapeHTML(device.connection)}</small></div><button class="icon-button" type="button" data-preview-close aria-label="关闭设备预览">${icon("close")}</button></div>
+    ${deviceSelectorMarkup("preview-device-select", device.id)}
+    <div class="preview-serial"><span>${escapeHTML(device.serial)}</span><button class="icon-button" type="button" data-preview-copy data-preview-device="${escapeHTML(device.id)}" title="复制此设备序列号" aria-label="复制此设备序列号">${icon("copy")}</button></div>
+    ${device.state === "online" ? `<div class="preview-action-grid">${commonActions.map(([action, image, label, className]) => `<button class="device-action ${className}" type="button" data-preview-action="${action}" data-preview-device="${escapeHTML(device.id)}" ${state.task?.deviceId === device.id ? "disabled" : ""}>${icon(image)}<span>${label}</span></button>`).join("")}</div>` : `<p class="dialog-copy">${device.state === "unauthorized" ? "请在手机上允许此电脑进行 USB 调试。" : "设备当前无法通信，暂不能执行设备操作。"}</p><button class="secondary-button" type="button" data-preview-guide>查看连接指引</button>`}
+    <p class="preview-note">仅操作上方设备。移开预览与贴边条 5 秒后关闭预览。</p>`;
+  devicePreview.hidden = false;
+  bindDeviceSelector($("#preview-device-select"), (id) => {
+    openDevicePreview(id);
+    $("#preview-device-select").focus({ preventScroll: true });
+  });
+  positionDevicePreview();
+}
+
+function openDevicePreview(id) {
+  if (!state.collapsed || !state.showFloatingTab || !currentDevices().some((item) => item.id === id)) return;
+  if (state.previewDevice !== id || devicePreview.hidden) {
+    state.previewDevice = id;
+    renderDevicePreview();
+  }
+  refreshAutoCollapse(true);
 }
 
 function positionEdge(offset = state.edgeOffset) {
@@ -146,6 +297,12 @@ function positionEdge(offset = state.edgeOffset) {
 }
 
 function bindContent() {
+  bindDeviceSelector($("#operation-device-select"), (id) => {
+    if (!currentDevices().some((device) => device.id === id && device.state === "online")) return;
+    state.selected = id;
+    render();
+    $("#operation-device-select").focus({ preventScroll: true });
+  });
   $("#refresh-devices")?.addEventListener("click", () => {
     if (state.scenario === "error") {
       footer("模拟重试失败，请检查 ADB 路径", "red");
@@ -218,13 +375,13 @@ function runTask(device, action, message) {
   }, action === "安装" ? 1600 : 950);
 }
 
-function handleAction(action) {
-  const device = currentDevice();
+function handleAction(action, device = currentDevice()) {
   if (!device) return;
   if (action === "screenshot") runTask(device, "截图", "模拟截图完成 · 未生成实际文件");
   if (action === "install") {
     fileTarget = { deviceId: device.id, generation: state.generation };
     filePickerOpen = true;
+    refreshAutoCollapse(true);
 
     $("#apk-input").value = "";
     $("#apk-input").click();
@@ -236,7 +393,8 @@ function handleAction(action) {
 }
 
 function openDialog(title, body) {
-
+  stopAutoCollapse();
+  clearTimeout(previewTimer); previewTimer = null;
   if (!dialog.open) dialogReturnFocus = document.activeElement;
   $("#dialog-title").textContent = title;
   $("#dialog-body").innerHTML = body;
@@ -280,10 +438,39 @@ function showLogcat(device) {
 }
 
 function showSettings() {
-  openDialog("偏好设置", `<p class="dialog-copy">浏览器仅模拟悬浮窗行为，无法设置系统级置顶或调用本机 ADB。下列设置仅影响本次预览。</p><div class="dialog-settings"><label class="switch-row"><span>悬浮窗置顶<small>正式版将使用 Windows 原生窗口能力</small></span><input id="setting-topmost" type="checkbox" role="switch" ${state.topmost ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label><label class="field-label" for="adb-path">ADB 路径（示意，只读）</label><input class="field-input" id="adb-path" value="C:\\Android\\platform-tools\\adb.exe" readonly><label class="field-label" for="scrcpy-path">scrcpy 路径（示意，只读）</label><input class="field-input" id="scrcpy-path" value="C:\\Tools\\scrcpy\\scrcpy.exe" readonly></div><div class="dialog-buttons"><button class="secondary-button" id="restore-demo">恢复正常场景</button><button class="primary-button" id="save-settings" data-focus>完成</button></div>`);
-  $("#setting-topmost").addEventListener("change", (event) => { state.topmost = event.target.checked; notify("已记录预览偏好；浏览器无法改变系统置顶。"); });
+  openDialog("偏好设置", `<p class="dialog-copy">浏览器仅模拟悬浮窗行为，无法设置系统级置顶或调用本机 ADB。设置仅影响本次页面会话，点击保存后生效；取消或关闭弹窗不应用修改。</p><div class="dialog-settings"><label class="switch-row"><span>悬浮窗置顶<small>正式版将使用 Windows 原生窗口能力</small></span><input id="setting-topmost" type="checkbox" role="switch" ${state.topmost ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label><label class="switch-row"><span>自动收起<small>仅在“显示浮窗”开启时生效；关闭自动收起不影响主动拖动收起</small></span><input id="setting-auto-collapse" type="checkbox" role="switch" ${state.autoCollapseEnabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label><label class="field-label" for="setting-collapse-delay">收起延时（秒，1–300 的整数）</label><input class="field-input" id="setting-collapse-delay" type="number" min="1" max="300" step="1" value="${state.collapseDelaySeconds}" aria-describedby="collapse-settings-error" ${state.autoCollapseEnabled ? "" : "disabled"}><p class="settings-validation" id="collapse-settings-error" role="status"></p><label class="field-label" for="adb-path">ADB 路径（示意，只读）</label><input class="field-input" id="adb-path" value="C:\\Android\\platform-tools\\adb.exe" readonly><label class="field-label" for="scrcpy-path">scrcpy 路径（示意，只读）</label><input class="field-input" id="scrcpy-path" value="C:\\Tools\\scrcpy\\scrcpy.exe" readonly></div><div class="dialog-buttons"><button class="secondary-button" id="restore-demo">恢复正常场景</button><button class="secondary-button" id="cancel-settings">取消</button><button class="primary-button" id="save-settings" data-focus>保存</button></div>`);
+  const automaticInput = $("#setting-auto-collapse");
+  const delayInput = $("#setting-collapse-delay");
+  const validateDelay = () => {
+    if (!automaticInput.checked) {
+      delayInput.setAttribute("aria-invalid", "false");
+      $("#collapse-settings-error").textContent = "";
+      return state.collapseDelaySeconds;
+    }
+    const raw = delayInput.value.trim();
+    const seconds = Number(raw);
+    const valid = /^\d+$/.test(raw) && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300;
+    delayInput.setAttribute("aria-invalid", String(!valid));
+    $("#collapse-settings-error").textContent = valid ? "" : "请输入 1–300 之间的整数秒数。";
+    return valid ? seconds : null;
+  };
+  automaticInput.addEventListener("change", () => {
+    delayInput.disabled = !automaticInput.checked;
+    delayInput.setAttribute("aria-invalid", "false");
+    $("#collapse-settings-error").textContent = "";
+  });
+  delayInput.addEventListener("input", validateDelay);
   $("#restore-demo").addEventListener("click", () => { closeDialog(); changeScenario("healthy"); notify("已切换为两台设备在线的模拟场景。"); });
-  $("#save-settings").addEventListener("click", closeDialog);
+  $("#cancel-settings").addEventListener("click", closeDialog);
+  $("#save-settings").addEventListener("click", () => {
+    const seconds = validateDelay();
+    if (seconds === null) { delayInput.focus(); return; }
+    state.topmost = $("#setting-topmost").checked;
+    state.autoCollapseEnabled = automaticInput.checked;
+    state.collapseDelaySeconds = seconds;
+    updateDesktopTip();
+    closeDialog();
+  });
 }
 
 async function copyText(text) {
@@ -296,13 +483,27 @@ async function copyText(text) {
   }
 }
 
-function setPinned(pinned) {
-  state.pinned = pinned;
-  const button = $("#pin-button");
-  button.classList.toggle("active", pinned);
-  button.setAttribute("aria-pressed", String(pinned));
-  button.setAttribute("aria-label", pinned ? "取消固定展开" : "固定展开");
-  button.title = pinned ? "取消固定展开" : "固定展开";
+function updateDesktopTip() {
+  $("#desktop-tip").lastElementChild.textContent = state.hiddenToTray
+    ? "面板已隐藏到模拟托盘 · 点击任务栏中的 ADB Dock 图标重新打开"
+    : state.collapsed ? "ADB 和数量区域仅拖动 · 点击末端“展开”按钮打开列表"
+    : !state.showFloatingTab ? "显示浮窗已关闭 · 面板保持显示，关闭后隐藏到模拟托盘"
+    : state.autoCollapseEnabled ? `离开面板 ${state.collapseDelaySeconds} 秒后收起 · 主动向边缘拖动可立即收起`
+    : "自动收起已关闭 · 可主动向边缘拖动或点击关闭收起";
+}
+
+function setShowFloatingTab(enabled) {
+  state.showFloatingTab = enabled;
+  const button = $("#floating-tab-button");
+  button.classList.toggle("active", enabled);
+  button.setAttribute("aria-pressed", String(enabled));
+  button.setAttribute("aria-label", "显示浮窗");
+  button.title = enabled
+    ? "显示浮窗已开启：关闭面板时收为贴边浮窗；点击可关闭显示浮窗"
+    : "显示浮窗已关闭：面板保持显示，关闭后隐藏到托盘；点击可开启";
+  if (!enabled && state.collapsed) expand(true);
+  updateDesktopTip();
+  refreshAutoCollapse(true);
 }
 
 function bounds() {
@@ -312,52 +513,82 @@ function bounds() {
 function positionDock(x, y) {
   const { maxX, maxY } = bounds();
   dock.style.left = `${Math.max(0, Math.min(maxX, x))}px`;
-  dock.style.top = `${Math.max(8, Math.min(Math.max(8, maxY), y))}px`;
+  dock.style.top = `${Math.max(0, Math.min(maxY, y))}px`;
 }
 
 function resetPosition() {
+  stopAutoCollapse();
+  closeDevicePreview();
+  openerBounds = null;
   dock.hidden = false;
   state.collapsed = false;
+  state.hiddenToTray = false;
   state.side = null;
   state.edgeOffset = null;
   edgeTab.hidden = true;
   positionDock((desktop.clientWidth - dock.offsetWidth) / 2 + (desktop.clientWidth > 600 ? 30 : 0), (desktop.clientHeight - 48 - dock.offsetHeight) / 2);
-  $("#desktop-tip").lastElementChild.textContent = "支持四边停靠 · 收起后长按ADB 和数量区域调整位置";
+  updateDesktopTip();
+  refreshAutoCollapse(true);
 }
 
 function collapse(manual = false) {
-  if (state.collapsed || dialog.open || filePickerOpen || drag || edgePress) return;
-  if (!manual && (state.pinned || !state.side)) return;
-  if (manual) setPinned(false);
-  const { maxX } = bounds();
-  state.side ||= dock.offsetLeft < maxX / 2 ? "left" : "right";
+  if (!state.showFloatingTab || state.collapsed || state.hiddenToTray || dialog.open || filePickerOpen || drag || edgePress) return;
+  stopAutoCollapse();
+  openerBounds = null;
+  const { maxX, maxY } = bounds();
+  if (manual || !state.side) {
+    const nearest = [[dock.offsetLeft, "left"], [maxX - dock.offsetLeft, "right"], [dock.offsetTop, "top"], [maxY - dock.offsetTop, "bottom"]];
+    state.side = nearest.sort((a, b) => a[0] - b[0])[0][1];
+  }
   const horizontal = state.side === "top" || state.side === "bottom";
   const offset = state.edgeOffset ?? (horizontal ? dock.offsetLeft : dock.offsetTop + 110);
   const restoreFocus = dock.contains(document.activeElement);
   state.collapsed = true;
+  state.hiddenToTray = false;
   dock.hidden = true;
   edgeTab.hidden = false;
   renderEdge();
   positionEdge(offset);
   $("#view-caption").textContent = "贴边状态";
-  $("#desktop-tip").lastElementChild.textContent = "长按ADB 和数量区域移到四边 · 点击设备图标操作";
+  updateDesktopTip();
   if (restoreFocus) $("#edge-expand-button").focus({ preventScroll: true });
 }
 
 function expand(focus = false) {
-  if (!state.collapsed || edgePress) return;
+  if ((!state.collapsed && !state.hiddenToTray) || edgePress) return;
+  stopAutoCollapse();
+  closeDevicePreview();
+  const fromTab = state.collapsed;
+  openerBounds = fromTab ? edgeTab.getBoundingClientRect() : null;
   const centerX = edgeTab.offsetLeft + edgeTab.offsetWidth / 2;
   const centerY = edgeTab.offsetTop + edgeTab.offsetHeight / 2;
   state.collapsed = false;
+  state.hiddenToTray = false;
   dock.hidden = false;
   edgeTab.hidden = true;
   const { maxX, maxY } = bounds();
-  const x = state.side === "left" ? 0 : state.side === "right" ? maxX : centerX - dock.offsetWidth / 2;
-  const y = state.side === "top" ? 8 : state.side === "bottom" ? maxY : centerY - dock.offsetHeight / 2;
+  const x = fromTab ? state.side === "left" ? 0 : state.side === "right" ? maxX : centerX - dock.offsetWidth / 2 : parseFloat(dock.style.left) || 0;
+  const y = fromTab ? state.side === "top" ? 0 : state.side === "bottom" ? maxY : centerY - dock.offsetHeight / 2 : parseFloat(dock.style.top) || 0;
   positionDock(x, y);
   $("#view-caption").textContent = state.selected ? "设备操作" : "设备面板";
-  $("#desktop-tip").lastElementChild.textContent = "卡片保持显示 · 拖到屏幕边缘松开后收起";
-  if (focus) $("#collapse-button").focus({ preventScroll: true });
+  updateDesktopTip();
+  if (focus) $("#close-panel-button").focus({ preventScroll: true });
+  refreshAutoCollapse(true);
+}
+
+function closePanel() {
+  if (dialog.open || filePickerOpen || drag || edgePress || state.hiddenToTray) return;
+  if (state.showFloatingTab) { collapse(true); return; }
+  stopAutoCollapse();
+  closeDevicePreview();
+  openerBounds = null;
+  state.collapsed = false;
+  state.hiddenToTray = true;
+  dock.hidden = true;
+  edgeTab.hidden = true;
+  $("#view-caption").textContent = "托盘隐藏";
+  updateDesktopTip();
+  $("#tray-reopen-button").focus({ preventScroll: true });
 }
 
 const edgeSummary = $("#edge-expand-button");
@@ -365,46 +596,40 @@ edgeSummary.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
 
 
-  suppressEdgeClick = false;
   const press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: edgeTab.offsetLeft, top: edgeTab.offsetTop, side: state.side, offset: state.edgeOffset, active: false, moved: false };
   edgePress = press;
+  refreshAutoCollapse(true);
   edgeSummary.focus({ preventScroll: true });
   edgeSummary.setPointerCapture(event.pointerId);
-  longPressTimer = setTimeout(() => {
-    if (edgePress !== press) return;
-    press.active = true;
-    desktop.classList.add("edge-dragging");
-    edgeTab.classList.add("is-dragging");
-    $("#desktop-tip").lastElementChild.textContent = "拖到想要的位置，松手吸附最近的一边";
-  }, 350);
   event.preventDefault();
 });
-edgeSummary.addEventListener("pointermove", (event) => {
+function moveEdgePress(event) {
   const press = edgePress;
   if (!press || event.pointerId !== press.pointerId) return;
   const dx = event.clientX - press.x;
   const dy = event.clientY - press.y;
   if (!press.active) {
-    if (Math.hypot(dx, dy) > 6) {
-      clearTimeout(longPressTimer);
-      press.moved = true;
-    }
-    return;
+    if (Math.hypot(dx, dy) < 4) return;
+    press.active = true;
+    desktop.classList.add("edge-dragging");
+    edgeTab.classList.add("is-dragging");
+    $("#desktop-tip").lastElementChild.textContent = "拖到想要的位置，松手吸附最近的一边";
   }
-  press.moved ||= Math.hypot(dx, dy) > 3;
+  press.moved = true;
   edgeTab.style.left = `${Math.max(0, Math.min(desktop.clientWidth - edgeTab.offsetWidth, press.left + dx))}px`;
   edgeTab.style.right = "auto";
   edgeTab.style.top = `${Math.max(0, Math.min(desktop.clientHeight - 48 - edgeTab.offsetHeight, press.top + dy))}px`;
-});
+  positionDevicePreview();
+}
+edgeSummary.addEventListener("pointermove", moveEdgePress);
 function finishEdgePress(event, cancelled = false) {
   const press = edgePress;
   if (!press) return;
-  clearTimeout(longPressTimer);
+  if (!cancelled && event.type === "pointerup") moveEdgePress(event);
   edgePress = null;
-  suppressEdgeClick = press.active || press.moved || cancelled;
   desktop.classList.remove("edge-dragging");
   edgeTab.classList.remove("is-dragging");
-  // 短按时保留命中节点，避免浏览器取消随后的 click。
+  // 概况区仅用于拖动，短按和键盘激活都保持收起状态。
   if (press.active && press.moved && !cancelled) {
     const rect = desktop.getBoundingClientRect();
     const x = Math.max(0, Math.min(desktop.clientWidth, event.clientX - rect.left));
@@ -420,21 +645,15 @@ function finishEdgePress(event, cancelled = false) {
     state.edgeOffset = press.offset;
     renderEdge();
   }
-  $("#desktop-tip").lastElementChild.textContent = "长按ADB 和数量区域移到四边 · 点击设备图标操作";
+  updateDesktopTip();
+  refreshAutoCollapse(true);
 }
 edgeSummary.addEventListener("pointerup", (event) => finishEdgePress(event));
 edgeSummary.addEventListener("pointercancel", (event) => finishEdgePress(event, true));
 edgeSummary.addEventListener("lostpointercapture", (event) => finishEdgePress(event, true));
-edgeSummary.addEventListener("click", (event) => {
-  const suppress = suppressEdgeClick && event.detail !== 0;
-  suppressEdgeClick = false;
-  if (suppress || edgePress) return;
-  state.selected = null;
-  render();
-  expand(true);
-});
 edgeSummary.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && edgePress) { finishEdgePress(event, true); return; }
+  if (event.key === "Enter" || event.key === " ") { event.preventDefault(); return; }
   const side = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "bottom" }[event.key];
   if (!side || edgePress) return;
   event.preventDefault();
@@ -447,6 +666,8 @@ $("#drag-handle").addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || event.target.closest("button")) return;
 
   drag = { x: event.clientX, y: event.clientY, left: dock.offsetLeft, top: dock.offsetTop };
+  openerBounds = null;
+  refreshAutoCollapse(true);
   $("#drag-handle").setPointerCapture(event.pointerId);
   desktop.classList.add("dragging");
   event.preventDefault();
@@ -460,15 +681,25 @@ function finishDrag(event) {
   const previous = drag;
   drag = null;
   desktop.classList.remove("dragging");
-  if (event.type === "pointercancel") { positionDock(previous.left, previous.top); return; }
+  if (event.type === "pointercancel") { positionDock(previous.left, previous.top); refreshAutoCollapse(true); return; }
   const { maxX, maxY } = bounds();
-  const distances = [[Math.abs(dock.offsetLeft), "left"], [Math.abs(maxX - dock.offsetLeft), "right"], [Math.abs(dock.offsetTop - 8), "top"], [Math.abs(maxY - dock.offsetTop), "bottom"]].sort((a, b) => a[0] - b[0]);
+  const dx = event.clientX - previous.x;
+  const dy = event.clientY - previous.y;
+  const distances = [
+    [Math.abs(dock.offsetLeft), "left", dx <= -3],
+    [Math.abs(maxX - dock.offsetLeft), "right", dx >= 3],
+    [Math.abs(dock.offsetTop), "top", dy <= -3],
+    [Math.abs(maxY - dock.offsetTop), "bottom", dy >= 3],
+  ].sort((a, b) => a[0] - b[0]);
   state.side = distances[0][0] <= 20 ? distances[0][1] : null;
   state.edgeOffset = null;
-  if (state.side) {
-    positionDock(state.side === "left" ? 0 : state.side === "right" ? maxX : dock.offsetLeft, state.side === "top" ? 8 : state.side === "bottom" ? maxY : dock.offsetTop);
+  const approached = distances.filter(([distance, , toward]) => distance <= 20 && toward)[0];
+  if (approached) {
+    state.side = approached[1];
+    positionDock(state.side === "left" ? 0 : state.side === "right" ? maxX : dock.offsetLeft, state.side === "top" ? 0 : state.side === "bottom" ? maxY : dock.offsetTop);
     collapse();
   }
+  refreshAutoCollapse(true);
 }
 $("#drag-handle").addEventListener("pointerup", finishDrag);
 $("#drag-handle").addEventListener("pointercancel", finishDrag);
@@ -477,11 +708,7 @@ edgeOpenButton.addEventListener("click", () => { state.selected = null; render()
 edgeTab.addEventListener("click", (event) => {
   const deviceButton = event.target.closest("[data-edge-device]");
   if (deviceButton) {
-    const id = deviceButton.dataset.edgeDevice;
-    state.selected = null;
-    render();
-    expand();
-    openDevice(id);
+    openDevicePreview(deviceButton.dataset.edgeDevice);
     return;
   }
   if (event.target.closest("[data-edge-more]")) {
@@ -496,20 +723,61 @@ edgeTab.addEventListener("click", (event) => {
     else showGuide();
   }
 });
-$("#collapse-button").addEventListener("click", () => collapse(true));
+edgeTab.addEventListener("pointerdown", (event) => {
+  const button = event.target.closest("[data-edge-device]");
+  if (event.button !== 0 || !button) return;
+  iconSwipe = { pointerId: event.pointerId, id: button.dataset.edgeDevice, x: event.clientX, y: event.clientY, active: false };
+  button.setPointerCapture(event.pointerId);
+  refreshAutoCollapse(true);
+});
+function moveDeviceIconSwipe(event) {
+  if (!iconSwipe || iconSwipe.pointerId !== event.pointerId) return;
+  const dx = event.clientX - iconSwipe.x;
+  const dy = event.clientY - iconSwipe.y;
+  if (!iconSwipe.active && dx <= -12 && Math.abs(dx) > Math.abs(dy)) {
+    iconSwipe.active = true;
+    openDevicePreview(iconSwipe.id);
+  }
+}
+edgeTab.addEventListener("pointermove", moveDeviceIconSwipe);
+function finishDeviceIconSwipe(event) {
+  if (!iconSwipe || iconSwipe.pointerId !== event.pointerId) return;
+  if (event.type === "pointerup") moveDeviceIconSwipe(event);
+  iconSwipe = null;
+  refreshAutoCollapse(true);
+}
+edgeTab.addEventListener("pointerup", finishDeviceIconSwipe);
+edgeTab.addEventListener("pointercancel", finishDeviceIconSwipe);
+edgeTab.addEventListener("lostpointercapture", finishDeviceIconSwipe);
+devicePreview.addEventListener("click", (event) => {
+  const device = currentDevices().find((item) => item.id === state.previewDevice);
+  if (event.target.closest("[data-preview-close]")) { closeDevicePreview(); return; }
+  if (!device) return;
+  if (event.target.closest("[data-preview-guide]")) { showGuide(device.state === "unauthorized"); return; }
+  const button = event.target.closest("[data-preview-action], [data-preview-copy]");
+  if (!button || button.dataset.previewDevice !== device.id) return;
+  if (button.hasAttribute("data-preview-copy")) copyText(device.serial);
+  else handleAction(button.dataset.previewAction, device);
+});
+$("#close-panel-button").addEventListener("click", closePanel);
 $("#edge-demo-button").addEventListener("click", () => {
-  if (!state.collapsed) { state.side = "right"; state.edgeOffset = null; positionDock(bounds().maxX, dock.offsetTop); }
-  collapse(true);
-  notify("长按ADB 和数量区域可拖到四边；左右竖排、上下横排。");
+  if (state.showFloatingTab && !state.collapsed && !state.hiddenToTray) { state.side = "right"; state.edgeOffset = null; positionDock(bounds().maxX, dock.offsetTop); }
+  closePanel();
+  notify(state.showFloatingTab ? "ADB 和数量区域仅拖动；点击末端“展开”按钮打开列表。" : "已隐藏到模拟托盘，点击任务栏中的 ADB Dock 图标重新打开。");
 });
 $("#settings-button").addEventListener("click", showSettings);
-$("#pin-button").addEventListener("click", () => setPinned(!state.pinned));
+$("#floating-tab-button").addEventListener("click", () => setShowFloatingTab(!state.showFloatingTab));
+$("#tray-reopen-button").addEventListener("click", () => {
+  expand(true);
+  if (!dock.hidden) $("#close-panel-button").focus({ preventScroll: true });
+  refreshAutoCollapse(true);
+});
 $$("[data-scenario]").forEach((button) => button.addEventListener("click", () => changeScenario(button.dataset.scenario)));
 $("#dialog-close").addEventListener("click", closeDialog);
 dialog.addEventListener("close", () => {
-  if (dialogReturnFocus?.isConnected && !dock.hidden) dialogReturnFocus.focus({ preventScroll: true });
+  if (dialogReturnFocus?.isConnected && (!dock.hidden || (!devicePreview.hidden && devicePreview.contains(dialogReturnFocus)))) dialogReturnFocus.focus({ preventScroll: true });
   dialogReturnFocus = null;
-
+  refreshAutoCollapse(true);
 });
 dialog.addEventListener("click", (event) => {
   const rect = dialog.getBoundingClientRect();
@@ -517,6 +785,7 @@ dialog.addEventListener("click", (event) => {
 });
 $("#apk-input").addEventListener("change", (event) => {
   filePickerOpen = false;
+  refreshAutoCollapse(true);
   const file = event.target.files[0];
   const target = fileTarget;
   fileTarget = null;
@@ -527,24 +796,26 @@ $("#apk-input").addEventListener("change", (event) => {
   runTask(device, "安装", `模拟安装完成 · ${file.name}（未上传、未安装）`);
 
 });
-$("#apk-input").addEventListener("cancel", () => { filePickerOpen = false; fileTarget = null;  });
+$("#apk-input").addEventListener("cancel", () => { filePickerOpen = false; fileTarget = null; refreshAutoCollapse(true); });
 $("#reset-button").addEventListener("click", () => {
 
 
   closeDialog();
   state.topmost = true;
-  setPinned(false);
   resetPosition();
   changeScenario("mixed");
-  notify("已恢复初始预览。");
+  notify("已重置场景和位置，浮窗与收起设置保持不变。");
 });
 new ResizeObserver(() => {
   if (!initialized) return;
+  if (state.hiddenToTray) return;
   if (state.collapsed) {
     renderEdge();
     return;
   }
-  positionDock(state.side === "left" ? 0 : state.side === "right" ? bounds().maxX : dock.offsetLeft, state.side === "top" ? 8 : state.side === "bottom" ? bounds().maxY : dock.offsetTop);
+  positionDock(state.side === "left" ? 0 : state.side === "right" ? bounds().maxX : dock.offsetLeft, state.side === "top" ? 0 : state.side === "bottom" ? bounds().maxY : dock.offsetTop);
+  openerBounds = null;
+  refreshAutoCollapse(true);
 }).observe(desktop);
 render();
 resetPosition();

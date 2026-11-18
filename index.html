@@ -13,7 +13,7 @@
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="i-device" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10 18h4M10 5h4"/></symbol>
     <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
-    <symbol id="i-pin" viewBox="0 0 24 24"><path d="m15 3 6 6-3 1-4 4v4l-2 2-8-8 2-2h4l4-4zM8 16l-5 5"/></symbol>
+    <symbol id="i-floating-tab" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/><path d="M4 5h4v14H4z" fill="var(--tab-fill, none)" stroke="none"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="m10 3-.7 2.3-2 .9L5 5.7 3 9l1.7 1.8v2.4L3 15l2 3.3 2.3-.5 2 .9L10 21h4l.7-2.3 2-.9 2.3.5 2-3.3-1.7-1.8v-2.4L21 9l-2-3.3-2.3.5-2-.9L14 3z"/><circle cx="12" cy="12" r="3"/></symbol>
     <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M19 4v16M5 7l5 5-5 5M10 12h5"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
@@ -49,7 +49,7 @@
 
     <section class="workbench" id="preview" aria-label="悬浮窗交互原型">
       <div class="preview-column">
-        <div class="stage-caption"><span><span class="caption-dot"></span> 桌面预览 <span class="caption-divider">/</span> <span id="view-caption">设备面板</span></span><span class="caption-tip"><svg><use href="#i-mouse"/></svg> 长按 ADB 和数量，试试四边停靠</span></div>
+        <div class="stage-caption"><span><span class="caption-dot"></span> 桌面预览 <span class="caption-divider">/</span> <span id="view-caption">设备面板</span></span><span class="caption-tip"><svg><use href="#i-mouse"/></svg> 按住 ADB 和数量即可拖动，试试四边停靠</span></div>
         <div class="desktop" id="desktop">
           <div class="desktop-art" aria-hidden="true"><div class="ribbon ribbon-one"></div><div class="ribbon ribbon-two"></div><div class="ribbon ribbon-three"></div></div>
           <div class="desktop-watermark" aria-hidden="true"><span>LESS FRICTION.</span><span>MORE FOCUS.</span><small>把专注，还给手头的工作。</small></div>
@@ -58,19 +58,20 @@
           <section class="dock" id="dock" aria-label="ADB Dock 悬浮窗">
             <header class="dock-titlebar" id="drag-handle">
               <div class="dock-brand"><span class="mini-logo"><svg><use href="#i-device"/></svg></span><strong>ADB Dock</strong><span class="live-pill">实时</span></div>
-              <div class="title-actions"><button class="icon-button" id="pin-button" title="固定展开" aria-label="固定展开" aria-pressed="false"><svg><use href="#i-pin"/></svg></button><button class="icon-button" id="settings-button" title="设置" aria-label="打开设置"><svg><use href="#i-settings"/></svg></button><button class="icon-button" id="collapse-button" title="贴边收起" aria-label="贴边收起"><svg><use href="#i-collapse"/></svg></button></div>
+              <div class="title-actions"><button class="icon-button active" id="floating-tab-button" title="显示浮窗已开启：关闭面板时收为贴边浮窗；点击可关闭显示浮窗" aria-label="显示浮窗" aria-pressed="true"><svg aria-hidden="true"><use href="#i-floating-tab"/></svg></button><button class="icon-button" id="settings-button" title="设置" aria-label="打开设置"><svg><use href="#i-settings"/></svg></button><button class="icon-button" id="close-panel-button" title="关闭面板：开启显示浮窗时收为贴边条，否则隐藏到托盘" aria-label="关闭面板"><svg><use href="#i-close"/></svg></button></div>
             </header>
             <div class="dock-content" id="dock-content"></div>
             <footer class="dock-footer"><span class="footer-message" id="footer-message" role="status"><span class="status-dot green"></span> 设备状态已同步</span><span class="footer-shortcut" id="footer-label">本地连接</span></footer>
           </section>
 
           <section class="edge-tab tone-warning" id="edge-tab" hidden aria-label="ADB 贴边设备列表">
-            <button class="edge-summary" id="edge-expand-button" aria-label="短按展开全部设备，长按拖动位置，方向键切换停靠边" title="点击展开；长按 ADB 和数量区域约 350ms 可拖动到四边"><span class="edge-brand">ADB</span><strong id="edge-count">2<span>/3</span></strong><span class="edge-state"><span class="status-dot amber"></span><span id="edge-status">待授权</span></span></button>
+            <button class="edge-summary" id="edge-expand-button" aria-label="仅拖动贴边条，点击不展开，方向键切换停靠边" title="仅用于拖动：按住 ADB 和数量区域并移动即可拖动；点击不展开"><span class="edge-brand">ADB</span><strong id="edge-count">2<span>/3</span></strong><span class="edge-state"><span class="status-dot amber"></span><span id="edge-status">待授权</span></span></button>
             <div class="edge-device-list" id="edge-device-list" role="group" aria-label="各设备连接状态"></div>
-            <button class="edge-open-button" id="edge-open-button" aria-label="展开全部设备" title="展开全部设备"><svg class="edge-arrow"><use href="#i-chevron"/></svg></button>
+            <button class="edge-open-button" id="edge-open-button" aria-label="展开全部设备" title="展开全部设备">展开</button>
           </section>
-          <div class="desktop-tip" id="desktop-tip"><span class="keycap">↔</span><span>支持四边停靠 · 收起后长按ADB 和数量区域调整位置</span></div>
-          <div class="desktop-taskbar" aria-hidden="true"><span class="taskbar-weather"><span class="weather-orb"></span><span>晴朗<small>适合专注的一天</small></span></span><div class="taskbar-apps"><span class="taskbar-windows windows-mark"><i></i><i></i><i></i><i></i></span><span class="search-shape"></span><span class="folder-shape"></span><span class="taskbar-adb"><svg><use href="#i-device"/></svg></span></div><span class="taskbar-time">14:32<small>2026/11/17</small></span></div>
+          <section class="device-preview" id="device-preview" hidden aria-labelledby="device-preview-title" aria-label="贴边设备操作预览"></section>
+          <div class="desktop-tip" id="desktop-tip"><span class="keycap">↔</span><span>支持四边停靠 · 收起后按住 ADB 和数量区域即可拖动</span></div>
+          <div class="desktop-taskbar" role="group" aria-label="模拟 Windows 任务栏"><span class="taskbar-weather" aria-hidden="true"><span class="weather-orb"></span><span>晴朗<small>适合专注的一天</small></span></span><div class="taskbar-apps"><span class="taskbar-windows windows-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="search-shape" aria-hidden="true"></span><span class="folder-shape" aria-hidden="true"></span><button class="taskbar-adb" id="tray-reopen-button" type="button" title="从模拟托盘重新打开 ADB Dock" aria-label="从模拟托盘重新打开 ADB Dock"><svg aria-hidden="true"><use href="#i-device"/></svg></button></div><span class="taskbar-time" aria-hidden="true">14:32<small>2026/11/17</small></span></div>
         </div>
         <div class="preview-bottom"><span><span class="simulation-dot"></span> 交互原型 · 所有设备与命令均为模拟</span><button id="reset-button"><svg><use href="#i-refresh"/></svg> 重置预览</button></div>
       </div>
@@ -87,14 +88,14 @@
         </div>
         <div class="rail-divider"></div>
         <div class="rail-heading"><span class="section-number">02</span><h2>让它安静地待在一边</h2></div>
-        <p class="rail-description">每台设备一个图标；长按ADB 和数量区域，移到屏幕四边。</p>
-        <button class="edge-demo-button" id="edge-demo-button"><svg><use href="#i-collapse"/></svg><span>体验贴边收起</span><svg><use href="#i-chevron"/></svg></button>
-        <p class="rail-description">点击箭头展开后保持显示；拖动卡片到边缘松开，再收起。</p>
+        <p class="rail-description">ADB 和数量区域仅用于拖动，点击末端“展开”打开列表。点击或向左滑动设备图标，在旁边预览该设备的操作；移开贴边条与预览 5 秒后关闭。</p>
+        <button class="edge-demo-button" id="edge-demo-button"><svg><use href="#i-close"/></svg><span>体验关闭面板</span><svg><use href="#i-chevron"/></svg></button>
+        <p class="rail-description">“显示浮窗”默认开启，关闭面板时收为贴边条；关闭显示浮窗后，面板保持打开，主动关闭才隐藏到模拟托盘。自动收起可在设置中开关并调整 1–300 秒延时，默认 2 秒。</p>
         <div class="design-note"><span class="note-icon"><svg><use href="#i-spark"/></svg></span><div><strong>少一点切换，多一点专注。</strong><p>点击设备进入操作页，试试投屏、截图和安装 APK。</p></div></div>
       </aside>
     </section>
 
-    <section class="principles" aria-label="设计原则"><div><span>01 / ALWAYS VISIBLE</span><h3>收起窗口，不收起状态</h3><p>屏幕边缘的一小格，就能知道设备是否就绪。</p></div><div><span>02 / DEVICE FIRST</span><h3>每一次操作，都有明确对象</h3><p>先确认设备，再执行命令，多台连接也不混乱。</p></div><div><span>03 / QUIET BY DESIGN</span><h3>需要时出现，不需要时退后</h3><p>点击展开后保持显示，拖到边缘松开再收起。</p></div></section>
+    <section class="principles" aria-label="设计原则"><div><span>01 / ALWAYS VISIBLE</span><h3>收起窗口，不收起状态</h3><p>屏幕边缘的一小格，就能知道设备是否就绪。</p></div><div><span>02 / DEVICE FIRST</span><h3>每一次操作，都有明确对象</h3><p>先确认设备，再执行命令，多台连接也不混乱。</p></div><div><span>03 / QUIET BY DESIGN</span><h3>需要时出现，不需要时退后</h3><p>贴边显示或仅留托盘，由你选择；收起延时也可调整。</p></div></section>
   </main>
   <footer class="site-footer"><span>ADB Dock <span class="footer-slash">/</span> Windows 悬浮设备助手</span><span>产品与交互概念 · V0.1</span></footer>
 

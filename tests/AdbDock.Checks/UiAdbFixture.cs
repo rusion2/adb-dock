@@ -38,7 +38,7 @@ public static class UiAdbFixture
         if (args[0] != "-s" || args.Length < 3) return null;
         if (args[2] == "shell" && args.Length >= 5 && args[3] == "getprop")
         {
-            Console.WriteLine(args[4] switch { "ro.product.model" => "UI Fixture Phone", "ro.product.manufacturer" => "Test Only", "ro.build.version.release" => "15", "ro.build.version.sdk" => "35", _ => "" });
+            Console.WriteLine(args[4] switch { "ro.product.model" => "UI Fixture Phone " + args[1], "ro.product.manufacturer" => "Test Only", "ro.build.version.release" => "15", "ro.build.version.sdk" => "35", _ => "" });
             return 0;
         }
         if (args[2] == "shell" && args.Length >= 5 && args[3] == "cat")

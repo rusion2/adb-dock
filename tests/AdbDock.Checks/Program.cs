@@ -469,7 +469,8 @@ internal static class Program
         var directory = NewDirectory("settings JSON 中文");
         var store = new SettingsStore(directory);
         var defaults = store.Load();
-        Check(defaults.Topmost && defaults.AutoCollapse && !defaults.AutoStart, "missing configuration uses safe defaults");
+        Check(defaults.Topmost && defaults.ShowFloatingTab && defaults.AutoCollapse && defaults.AutoCollapseDelaySeconds == 2 && !defaults.AutoStart,
+            "missing configuration defaults to a visible floating tab and two-second automatic collapse");
         Check(store.LoadError is null, "missing configuration is not corruption");
         var settings = new AppSettings
         {
@@ -477,8 +478,9 @@ internal static class Program
             ScrcpyPath = @"D:\镜像 工具\scrcpy.exe",
             ScreenshotDirectory = @"D:\截图 文件",
             Topmost = false,
+            ShowFloatingTab = false,
             AutoCollapse = false,
-            Pinned = true,
+            AutoCollapseDelaySeconds = 17,
             AutoStart = true,
             Side = DockSide.Top,
             WindowX = -1250,
@@ -486,11 +488,14 @@ internal static class Program
         };
         store.Save(settings);
         Equal(JsonSerializer.Serialize(settings), JsonSerializer.Serialize(store.Load()), "all settings JSON round-trip");
+        Check(!File.ReadAllText(Path.Combine(directory, "settings.json")).Contains("\"Pinned\"", StringComparison.Ordinal),
+            "new preferences replace the obsolete Pinned field when saved");
         Check(!File.Exists(Path.Combine(directory, "settings.json.tmp")), "atomic save leaves no temporary file");
         const string corrupt = "{ damaged JSON ";
         File.WriteAllText(Path.Combine(directory, "settings.json"), corrupt);
         defaults = store.Load();
-        Check(defaults.Topmost && defaults.AutoCollapse && !defaults.AutoStart, "corrupt configuration returns defaults without throwing");
+        Check(defaults.Topmost && defaults.ShowFloatingTab && defaults.AutoCollapse && defaults.AutoCollapseDelaySeconds == 2 && !defaults.AutoStart,
+            "corrupt configuration returns the new defaults without throwing");
         Check(!string.IsNullOrWhiteSpace(store.LoadError), "corrupt configuration exposes an error");
         Equal(corrupt, File.ReadAllText(Path.Combine(directory, "settings.json")), "load does not overwrite damaged configuration");
         store.Save(settings);
@@ -505,6 +510,49 @@ internal static class Program
         Equal("", normalized.ScrcpyPath, "null scrcpy path normalized");
         Check(!string.IsNullOrWhiteSpace(normalized.ScreenshotDirectory), "null screenshot directory normalized");
         Equal(DockSide.None, normalized.Side, "invalid docking value normalized");
+
+        var path = Path.Combine(directory, "settings.json");
+        foreach (var invalidDelay in new[] { -1, 0, 301, int.MaxValue })
+        {
+            File.WriteAllText(path, JsonSerializer.Serialize(new { ShowFloatingTab = false, AutoCollapse = false, AutoCollapseDelaySeconds = invalidDelay }));
+            var loaded = new SettingsStore(directory).Load();
+            Equal(2, loaded.AutoCollapseDelaySeconds, "invalid stored delay falls back to two seconds");
+            Check(!loaded.ShowFloatingTab && !loaded.AutoCollapse, "delay normalization preserves explicit new preferences");
+        }
+        foreach (var boundary in new[] { 1, 300 })
+        {
+            settings.AutoCollapseDelaySeconds = boundary;
+            store.Save(settings);
+            Equal(boundary, store.Load().AutoCollapseDelaySeconds, "both supported delay boundaries survive save/load while automatic collapse is off");
+        }
+        var unchanged = File.ReadAllText(path);
+        settings.AutoCollapseDelaySeconds = 0;
+        Throws<ArgumentOutOfRangeException>(() => store.Save(settings), "saving a delay below the range is rejected");
+        settings.AutoCollapseDelaySeconds = 301;
+        Throws<ArgumentOutOfRangeException>(() => store.Save(settings), "saving a delay above the range is rejected");
+        Equal(unchanged, File.ReadAllText(path), "invalid saves preserve existing settings");
+
+        foreach (var pinned in new[] { false, true })
+        foreach (var legacyAutomatic in new[] { false, true })
+        {
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Pinned = pinned, AutoCollapse = legacyAutomatic }));
+            var migrationStore = new SettingsStore(directory);
+            var migrated = migrationStore.Load();
+            Check(migrated.ShowFloatingTab && migrated.AutoCollapse == !pinned && migrated.AutoCollapseDelaySeconds == 2,
+                "legacy pin controls migration; obsolete automatic-collapse values do not change behavior");
+            migrationStore.Save(migrated);
+            Check(!File.ReadAllText(path).Contains("\"Pinned\"", StringComparison.Ordinal), "migration save removes the legacy pin field");
+            migrated.AutoCollapse = !migrated.AutoCollapse;
+            migrated.ShowFloatingTab = false;
+            migrated.AutoCollapseDelaySeconds = 19;
+            migrationStore.Save(migrated);
+            Equal(JsonSerializer.Serialize(migrated), JsonSerializer.Serialize(migrationStore.Load()),
+                "new automatic-collapse choices persist after migration without reapplying the old pin");
+        }
+        File.WriteAllText(path, "{\"Pinned\":true,\"ShowFloatingTab\":true,\"AutoCollapse\":true,\"AutoCollapseDelaySeconds\":5}");
+        var currentPreferences = new SettingsStore(directory).Load();
+        Check(currentPreferences.AutoCollapse && currentPreferences.AutoCollapseDelaySeconds == 5,
+            "a stale pin field cannot override explicit preferences in the new schema");
         return Task.CompletedTask;
     }
 

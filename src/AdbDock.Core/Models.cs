@@ -32,12 +32,16 @@ public enum DockSide { None, Left, Right, Top, Bottom }
 
 public sealed class AppSettings
 {
+    public const int DefaultAutoCollapseDelaySeconds = 2;
+    public const int MinimumAutoCollapseDelaySeconds = 1;
+    public const int MaximumAutoCollapseDelaySeconds = 300;
     public string AdbPath { get; set; } = "";
     public string ScrcpyPath { get; set; } = "";
     public string ScreenshotDirectory { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AdbDock");
     public bool Topmost { get; set; } = true;
+    public bool ShowFloatingTab { get; set; } = true;
     public bool AutoCollapse { get; set; } = true;
-    public bool Pinned { get; set; }
+    public int AutoCollapseDelaySeconds { get; set; } = DefaultAutoCollapseDelaySeconds;
     public bool AutoStart { get; set; }
     public DockSide Side { get; set; }
     public int? WindowX { get; set; }
