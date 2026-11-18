@@ -8,7 +8,9 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code> · <code>v0.1.3-beta.2</code></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.2/AdbDock-0.1.3-beta.2-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.2 pre-release installer (Windows x64)</strong></a></p>
+
+<p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code></p>
 
 <p align="center">
   <a href="#quick-start">Get started</a> · <a href="#upgrade">Upgrade</a> · <a href="#preview">Screenshots</a> · <a href="#usage">Usage</a> · <a href="#development">Build from source</a> · <a href="#packaging">Packaging</a>
