@@ -1,0 +1,19 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <DataTemplate x:Key="DevicePickerSelection">
+    <TextBlock Text="{Binding SingleLineName}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+  </DataTemplate>
+  <DataTemplate x:Key="DevicePickerOption">
+    <DockPanel HorizontalAlignment="Left">
+      <TextBlock DockPanel.Dock="Right" TextWrapping="NoWrap">
+        <TextBlock.Text>
+          <MultiBinding StringFormat="{} · {0} · {1}">
+            <Binding Path="Serial"/>
+            <Binding Path="Status"/>
+          </MultiBinding>
+        </TextBlock.Text>
+      </TextBlock>
+      <TextBlock Text="{Binding SingleLineName}" MaxWidth="260" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+    </DockPanel>
+  </DataTemplate>
+</ResourceDictionary>

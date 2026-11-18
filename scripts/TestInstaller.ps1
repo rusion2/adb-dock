@@ -257,6 +257,17 @@ function Uninstall-TestCopy {
 }
 
 try {
+    Invoke-InstallerCheck 'External payload provenance stays unknown when packaging checkout checks pass' {
+        $state = [pscustomobject]@{ Branch = 'main'; Commit = '0123456789'; Clean = $true }
+        $external = Get-InstallerSourceInfo $state $true $true -ExternalPayload | ConvertTo-Json | ConvertFrom-Json
+        Assert-InstallerCondition ($external.payloadOrigin -ceq 'external') 'External binaries have the wrong source label.'
+        foreach ($field in @('sourceCommit','sourceBranch','sourceClean','checksPassed','nativeUiChecksPassed')) {
+            Assert-InstallerCondition ($null -eq $external.$field) ('External payload was attributed to the packaging checkout: ' + $field)
+        }
+        Assert-InstallerCondition ($external.packagingCheckout.commit -ceq $state.Commit -and $external.packagingCheckout.checksPassed -and $external.packagingCheckout.nativeUiChecksPassed) 'Packaging proof was lost.'
+        $internal = Get-InstallerSourceInfo $state $true $null
+        Assert-InstallerCondition ($internal.sourceCommit -ceq $state.Commit -and $internal.checksPassed -and $null -eq $internal.nativeUiChecksPassed) 'Building from source lost its own provenance.'
+    }
     $entries = @(Get-ChildItem -LiteralPath $payloadPath -Recurse -Force)
     foreach ($entry in $entries) {
         if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Payload reparse points are not supported.' }
@@ -272,6 +283,13 @@ try {
         $manifestPath = Join-Path $runDirectory 'PayloadManifest.nsh'
         $lines = New-Object 'System.Collections.Generic.List[string]'
         $lines.Add('!macro RemovePayload')
+        # Probe at the actual start of removal, as a second app launch would.
+        $lines.Add('  System::Call ''kernel32::OpenMutexW(i 0x00100000, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0''')
+        $lines.Add('  ${If} $0 == 0')
+        $lines.Add('    SetErrorLevel 2')
+        $lines.Add('    Abort')
+        $lines.Add('  ${EndIf}')
+        $lines.Add('  System::Call ''kernel32::CloseHandle(p r0)''')
         foreach ($file in $payloadFiles) {
             $relative = ConvertTo-NsisLiteral (Get-PayloadRelativePath $file.FullName)
             $lines.Add('  Delete "$INSTDIR\' + $relative + '"')
@@ -285,12 +303,19 @@ try {
         [IO.File]::WriteAllLines($manifestPath, $lines, (New-Object Text.UTF8Encoding($false)))
     }
 
+    $inventoryPath = Join-Path $runDirectory 'payload-inventory.txt'
+    $inventoryEntries = foreach ($entry in $entries) {
+        $relative = Get-PayloadRelativePath $entry.FullName
+        if ($entry.PSIsContainer) { $relative + '\' } else { $relative }
+    }
+    [IO.File]::WriteAllLines($inventoryPath, [string[]]$inventoryEntries, [Text.Encoding]::UTF8)
     $defines = [ordered]@{
         APP_VERSION = $AppVersion
         APP_FILE_VERSION = $releaseVersion.FileVersion
         PAYLOAD_DIR = $payloadPath
         OUTPUT_FILE = $setupPath
         FILE_MANIFEST = $manifestPath
+        PAYLOAD_INVENTORY = $inventoryPath
         APP_REG_KEY = $appKey
         UNINSTALL_REG_KEY = $uninstallKey
         RUN_REG_KEY = $runKey
@@ -346,6 +371,60 @@ try {
         }
         finally { Close-RunningDockFixture $legacy; Close-RunningDockFixture $decoy }
     }
+    Invoke-InstallerCheck 'An upgrade without a previous inventory adopts only its own payload' {
+        $ownershipKey = $appKey + '\Payloads'
+        Remove-TestRegistryValue $ownershipKey $installDirectory
+        $unknown = Join-Path $installDirectory 'local-library.dll'
+        [IO.File]::WriteAllText($unknown, 'Unknown origin')
+        Install-TestCopy $installDirectory
+        $recorded = @(Get-TestRegistryValue $ownershipKey $installDirectory)
+        Assert-InstallerCondition ($recorded -contains 'AdbDock.exe' -and $recorded -notcontains 'local-library.dll') 'Migration claimed files outside its own payload.'
+        Assert-InstallerCondition ([IO.File]::ReadAllText($unknown) -ceq 'Unknown origin') 'Migration changed a file without a known owner.'
+    }
+    Invoke-InstallerCheck 'Upgrading an older inventory retries retired files and preserves neighboring user data' {
+        $ownershipKey = $appKey + '\Payloads'
+        $current = @(Get-TestRegistryValue $ownershipKey $installDirectory)
+        Assert-InstallerCondition ($current -contains 'AdbDock.exe') 'Fresh installation did not record its inventory.'
+        $oldDirectory = Join-Path $installDirectory 'Obsolete Library'
+        [void][IO.Directory]::CreateDirectory($oldDirectory)
+        $oldFile = Join-Path $oldDirectory 'retired.dll'
+        $userFile = Join-Path $oldDirectory 'user.txt'
+        [IO.File]::WriteAllText($oldFile, 'Old library')
+        [IO.File]::WriteAllText($userFile, 'User data')
+        $old = [string[]]($current + @('Obsolete Library\', 'Obsolete Library\retired.dll'))
+        Set-TestRegistryValue $ownershipKey $installDirectory $old ([Microsoft.Win32.RegistryValueKind]::MultiString)
+        $lock = [IO.File]::Open($oldFile, 'Open', 'Read', 'None')
+        try {
+            Invoke-OwnedProcess $setupPath @('/S') 2 -InstallDirectory $installDirectory
+            Assert-InstallerCondition ((Get-TestRegistryValue $ownershipKey $installDirectory) -contains 'Obsolete Library\retired.dll') 'A partial retirement lost the list required for retry.'
+        }
+        finally { $lock.Dispose() }
+        Install-TestCopy $installDirectory
+        Assert-InstallerCondition (![IO.File]::Exists($oldFile)) 'A retired file survived the upgrade.'
+        Assert-InstallerCondition ([IO.File]::ReadAllText($userFile) -ceq 'User data') 'Upgrade changed data placed beside an old library.'
+        Assert-InstallerCondition ((Get-TestRegistryValue $ownershipKey $installDirectory) -notcontains 'Obsolete Library\retired.dll') 'Upgrade kept obsolete ownership.'
+    }
+    Invoke-InstallerCheck 'Out-of-root and reparse paths stop retirement before any file is removed' {
+        $ownershipKey = $appKey + '\Payloads'
+        $current = [string[]]@(Get-TestRegistryValue $ownershipKey $installDirectory)
+        $outside = Join-Path $runDirectory 'Junction Target'
+        [void][IO.Directory]::CreateDirectory($outside)
+        $outsideFile = Join-Path $outside 'keep.txt'
+        [IO.File]::WriteAllText($outsideFile, 'Outside data')
+        $junction = Join-Path $installDirectory 'Redirect'
+        [void](New-Item -ItemType Junction -Path $junction -Target $outside)
+        try {
+            foreach ($unsafe in @('..\Junction Target\keep.txt','Redirect\keep.txt')) {
+                Set-TestRegistryValue $ownershipKey $installDirectory ([string[]]($current + $unsafe)) ([Microsoft.Win32.RegistryValueKind]::MultiString)
+                Invoke-OwnedProcess $setupPath @('/S') 2 -InstallDirectory $installDirectory
+                Assert-InstallerCondition ([IO.File]::ReadAllText($outsideFile) -ceq 'Outside data') 'Unsafe retirement changed an external file.'
+            }
+        }
+        finally {
+            Set-TestRegistryValue $ownershipKey $installDirectory $current ([Microsoft.Win32.RegistryValueKind]::MultiString)
+            [IO.Directory]::Delete($junction)
+        }
+    }
     Invoke-InstallerCheck 'Upgrade waits for the registered modern dock when the destination changes' {
         $modern = Start-RunningDockFixture $installDirectory 'modern'
         try {
@@ -380,6 +459,18 @@ try {
         $approval = Get-TestRegistryValue $approvalKey 'AdbDock'
         Assert-InstallerCondition ($null -ne $approval -and $approval[0] -eq 3) 'Upgrade cleared the disabled Explorer startup approval.'
         Assert-InstallerCondition ($null -eq (Get-TestRegistryValue $runKey 'AdbDock')) 'Disabled startup was re-enabled by upgrade.'
+    }
+    Invoke-InstallerCheck 'Moving an installation with startup deselected removes only the old owned startup command' {
+        # A disabled Explorer entry leaves the old Run command in place and
+        # selects the same component state as unchecking startup in the wizard.
+        Set-TestRegistryValue $runKey 'AdbDock' $expectedCommand
+        Set-TestRegistryValue $approvalKey 'AdbDock' ([byte[]]@(3,0,0,0)) ([Microsoft.Win32.RegistryValueKind]::Binary)
+        Install-TestCopy $movedDirectory
+        Assert-InstallerCondition ($null -eq (Get-TestRegistryValue $runKey 'AdbDock')) 'Moving with startup disabled retained the old executable in Run.'
+        $foreign = '"C:\Another Copy\AdbDock.exe"'
+        Set-TestRegistryValue $runKey 'AdbDock' $foreign
+        Install-TestCopy $installDirectory
+        Assert-InstallerCondition ((Get-TestRegistryValue $runKey 'AdbDock') -ceq $foreign) 'Moving removed a startup command from an unrelated location.'
     }
     Invoke-InstallerCheck 'Uninstall removes owned startup and files but retains unrelated data' {
         Set-TestRegistryValue $runKey 'AdbDock' $expectedCommand

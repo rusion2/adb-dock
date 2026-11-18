@@ -19,6 +19,7 @@
     <Geometry x:Key="FloatingTabGeometry">M5 4 H19 Q21 4 21 6 V18 Q21 20 19 20 H5 Q3 20 3 18 V6 Q3 4 5 4 Z M15 4 V20</Geometry>
     <Geometry x:Key="CloseGlyphGeometry">M6 6 L18 18 M18 6 L6 18</Geometry>
     <Geometry x:Key="SettingsGlyphGeometry">M4 7 H10 M10 4 V10 M10 7 H20 M4 17 H14 M14 14 V20 M14 17 H20</Geometry>
+    <Geometry x:Key="CameraGlyphGeometry">M4 7 H7 L9 4 H15 L17 7 H20 Q22 7 22 9 V18 Q22 20 20 20 H4 Q2 20 2 18 V9 Q2 7 4 7 Z M16 13.5 A4 4 0 1 1 8 13.5 A4 4 0 1 1 16 13.5 Z</Geometry>
     <Style x:Key="ToolbarGlyph" TargetType="Path">
       <Setter Property="Width" Value="24"/><Setter Property="Height" Value="24"/>
       <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ButtonBase}}}"/>
@@ -48,7 +49,10 @@
       <Setter Property="HorizontalAlignment" Value="Center"/><Setter Property="VerticalAlignment" Value="Center"/>
       <Setter Property="Margin" Value="0,3,0,0"/>
     </Style>
-    <Style x:Key="ActionButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Height" Value="77"/><Setter Property="Margin" Value="4"/><Setter Property="Background" Value="White"/></Style>
+    <Style x:Key="ActionButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Height" Value="58"/><Setter Property="Margin" Value="4"/><Setter Property="Padding" Value="3,4"/>
+      <Setter Property="Background" Value="White"/>
+    </Style>
     <Style TargetType="TextBox"><Setter Property="Padding" Value="9,7"/><Setter Property="BorderBrush" Value="#DCD7EB"/><Setter Property="BorderThickness" Value="1"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
     <Style TargetType="CheckBox"><Setter Property="Margin" Value="0,7"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
   </Application.Resources>

@@ -14,10 +14,12 @@ public sealed class DevicePicker : ComboBox
 {
     public sealed record DeviceOption(string Serial, string Name, string Status)
     {
+        public string SingleLineName => Name.ReplaceLineEndings(" ");
         public string DisplayText => $"{Name} · {Serial} · {Status}";
     }
 
     private readonly ObservableCollection<DeviceOption> options = new();
+    private readonly DataTemplate dropDownTemplate;
     private int settingDevices;
 
     public event Action<string>? DeviceChosen;
@@ -26,7 +28,6 @@ public sealed class DevicePicker : ComboBox
     {
         ItemsSource = options;
         SelectedValuePath = nameof(DeviceOption.Serial);
-        DisplayMemberPath = nameof(DeviceOption.DisplayText);
         TextSearch.SetTextPath(this, nameof(DeviceOption.DisplayText));
         IsEditable = false;
         IsTextSearchEnabled = true;
@@ -50,17 +51,25 @@ public sealed class DevicePicker : ComboBox
         }
 
         // Keep the native ComboBox template, focus feedback and keyboard behavior.
-        var textStyle = new Style(typeof(TextBlock), TryFindResource(typeof(TextBlock)) as Style);
-        textStyle.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.NoWrap));
-        textStyle.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
-        textStyle.Setters.Add(new Setter(MaxWidthProperty, 420d));
-        Resources[typeof(TextBlock)] = textStyle;
+        var templates = new ResourceDictionary
+        {
+            Source = new Uri("pack://application:,,,/AdbDock;component/DevicePickerTemplates.xaml")
+        };
+        ItemTemplate = (DataTemplate)templates["DevicePickerSelection"];
+        dropDownTemplate = (DataTemplate)templates["DevicePickerOption"];
         var itemStyle = new Style(typeof(ComboBoxItem), TryFindResource(typeof(ComboBoxItem)) as Style);
         itemStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(8, 6, 8, 6)));
         itemStyle.Setters.Add(new Setter(MinHeightProperty, 32d));
         itemStyle.Setters.Add(new Setter(ToolTipProperty, new Binding(nameof(DeviceOption.DisplayText))));
         itemStyle.Setters.Add(new Setter(AutomationProperties.NameProperty, new Binding(nameof(DeviceOption.DisplayText))));
         ItemContainerStyle = itemStyle;
+    }
+
+    protected override void PrepareContainerForItemOverride(DependencyObject element, object item)
+    {
+        base.PrepareContainerForItemOverride(element, item);
+        if (element is ComboBoxItem container && item is DeviceOption)
+            container.ContentTemplate = dropDownTemplate;
     }
 
     public void SetDevices(IEnumerable<DeviceRow> devices, string? currentSerial)

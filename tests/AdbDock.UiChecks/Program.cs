@@ -65,11 +65,11 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
         // These values are inherited only by our fixture clients; no user configuration is read.
         Environment.SetEnvironmentVariable("ADBDOCK_HOME", artifactDirectory);
         Environment.SetEnvironmentVariable("ADBDOCK_UI_SNAPSHOT", snapshotFile);
-        File.WriteAllText(snapshotFile, Initial);
+        File.WriteAllText(snapshotFile, "");
         new SettingsStore(artifactDirectory).Save(new AppSettings
         {
-            AdbPath = tool, ScrcpyPath = tool, ScreenshotDirectory = artifactDirectory,
-            AutoStart = false, Topmost = false, ShowFloatingTab = true, AutoCollapse = false,
+            AdbPath = Path.Combine(artifactDirectory, "missing", "adb.exe"), ScrcpyPath = tool, ScreenshotDirectory = artifactDirectory,
+            AutoStart = false, Topmost = false, ShowFloatingTab = true, AutoCollapse = true,
             AutoCollapseDelaySeconds = 2, Side = DockSide.None
         });
         application.Startup += (_, _) => application.Dispatcher.BeginInvoke(new Action(async () =>
@@ -95,6 +95,73 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
         Console.WriteLine("Native WPF fixture checks; artifacts: " + artifactDirectory);
         try
         {
+            await Check("first launch guides setup and authorization and holds the panel open until a device is online", async () =>
+            {
+                var config = new SettingsStore(artifactDirectory);
+                var leave = Field<DispatcherTimer>(window, "leaveTimer");
+                try
+                {
+                    await Until(() => model.EmptyTitle == "先配置 ADB");
+                    await Layout();
+                    var setup = Descendants<Button>(window).Single(button => AutomationProperties.GetAutomationId(button) == "EmptyHelpButton");
+                    Equal("配置 ADB", (string)setup.Content);
+                    Require(!leave.IsEnabled && !config.Load().HasConnectedDevice, "first run started auto-collapse before connecting");
+                    var outside = OutsidePoint(); var now = Environment.TickCount64;
+                    Invoke("EvaluateAutoCollapse", outside, now);
+                    Invoke("EvaluateAutoCollapse", outside, now + 10000);
+                    Require(!Field<bool>(window, "collapsed"), "first-run setup collapsed while the user was reading");
+                    Capture(window, "17-first-launch-configure-adb.png");
+
+                    await InspectDialog(() => setup.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)), async dialog =>
+                    {
+                        T Control<T>(string id) where T : DependencyObject =>
+                            Descendants<T>(dialog).Single(item => AutomationProperties.GetAutomationId(item) == id);
+                        var adbPath = Control<TextBox>("AdbPath");
+                        var scrcpyPath = Control<TextBox>("ScrcpyPath");
+                        var adbResult = Control<TextBlock>("AdbDetectionResult");
+                        var scrcpyResult = Control<TextBlock>("ScrcpyDetectionResult");
+                        var detect = Control<Button>("DetectToolsButton");
+                        await Until(() => adbPath.IsKeyboardFocused || ReferenceEquals(FocusManager.GetFocusedElement(dialog), adbPath));
+                        detect.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        await Until(() => adbResult.Text.Contains("检测失败") && scrcpyResult.Text.Contains("检测通过") && detect.IsEnabled);
+
+                        adbPath.Text = tool;
+                        scrcpyPath.Text = Path.Combine(artifactDirectory, "missing", "scrcpy.exe");
+                        detect.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        await Until(() => adbResult.Text.Contains("检测通过") && scrcpyResult.Text.Contains("检测失败") && detect.IsEnabled);
+                        Capture(dialog, "18-independent-tool-results.png");
+                        Control<Button>("SaveSettingsButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        Require(!dialog.IsVisible, "unavailable optional scrcpy prevented saving ADB");
+                    });
+                    await Until(() => model.AdbAvailable && model.Devices.Count == 0);
+                    await Layout();
+                    Equal("等待连接 Android 设备", model.EmptyTitle);
+                    Equal("查看连接步骤", (string)setup.Content);
+                    Require(!leave.IsEnabled, "empty device list activated first-run auto-collapse");
+                    Capture(window, "19-waiting-for-phone.png");
+
+                    await SetSnapshot("UI-A unauthorized usb:2\n", () => model.Devices.Count == 1 && model.Devices[0].NeedsAuthorization);
+                    var hint = Descendants<TextBlock>(Named<ItemsControl>("DeviceList")).Single(item =>
+                        AutomationProperties.GetAutomationId(item) == "AuthorizationHint");
+                    Require(hint.IsVisible && hint.Text.Contains("解锁手机") && hint.Text.Contains("自动更新"),
+                        "authorization guidance was not visible in the device list");
+                    Require(!leave.IsEnabled && !config.Load().HasConnectedDevice, "an unauthorized device completed onboarding");
+                    Capture(window, "20-authorization-in-device-list.png");
+
+                    await SetSnapshot(Initial, () => model.AdbAvailable && model.OnlineCount == "2");
+                    Require(leave.IsEnabled && config.Load().HasConnectedDevice,
+                        "a confirmed online device did not persist completion and enable the configured timer");
+                }
+                finally
+                {
+                    settings.AutoCollapse = false;
+                    settings.AdbPath = settings.ScrcpyPath = tool;
+                    Invoke("UpdateView");
+                    Invoke("SaveSettings");
+                    if (Field<AdbService?>(window, "adb") is null) await (Task)Invoke("RestartServicesAsync")!;
+                    await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Count == 4);
+                }
+            });
             await Check("listener, mixed device counts and actual bindings", async () =>
             {
                 await Until(() => model.Devices.Count == 4 && model.AdbAvailable);
@@ -144,7 +211,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal("UI-D", Descendants<TextBlock>(window).Single(item => AutomationProperties.GetAutomationId(item) == "SelectedSerial").Text);
                 Equal("mirror,screenshot,install,keys,info,logcat", string.Join(',', actions.Children.OfType<Button>().Select(button => button.Tag)));
                 var picker = Named<ComboBox>("DeviceSwitcher");
-                Equal("Serial", picker.SelectedValuePath); Equal("DisplayText", picker.DisplayMemberPath);
+                Equal("Serial", picker.SelectedValuePath); Equal("DisplayText", TextSearch.GetTextPath(picker));
                 Require(PickerOptions(picker).Select(option => option.Serial).ToHashSet().SetEquals(new[] { "UI-C", "UI-D" }), "full picker contains unavailable devices or loses an online device");
                 var surface = Named<StackPanel>("DetailPanel"); var bounds = Desktop.Bounds(window);
                 picker.SelectedValue = "UI-C"; await Layout();
@@ -159,13 +226,33 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 var outside = OutsidePoint(); var now = Environment.TickCount64;
                 Invoke("EvaluateAutoCollapse", outside, now); Invoke("EvaluateAutoCollapse", outside, now + 10_000);
                 Require(!Field<bool>(window, "collapsed"), "open full-device dropdown allowed auto collapse");
-                var sameNames = Initial.Replace("Fixture_One", "Same_Phone", StringComparison.Ordinal).Replace("Fixture_Two", "Same_Phone", StringComparison.Ordinal);
-                await SetSnapshot(sameNames, () => model.Devices.Where(row => row.IsOnline).All(row => row.Name == "Same Phone"));
+                var longName = "Same Phone " + new string('W', 100);
+                var longModel = longName.Replace(' ', '_');
+                var sameNames = Initial.Replace("Fixture_One", longModel, StringComparison.Ordinal).Replace("Fixture_Two", longModel, StringComparison.Ordinal);
+                await SetSnapshot(sameNames, () => model.Devices.Where(row => row.IsOnline).All(row => row.Name == longName));
                 Equal("UI-C", model.Selected?.Serial); Equal("UI-C", picker.SelectedValue as string);
+                await Layout();
                 var options = PickerOptions(picker);
-                Require(options.All(option => option.DisplayText.Contains(option.Serial, StringComparison.Ordinal)) && options.Select(option => option.DisplayText).Distinct().Count() == 2,
-                    "same-name devices are not distinguished by their serials");
+                foreach (var option in options)
+                {
+                    var item = picker.ItemContainerGenerator.ContainerFromItem(option) as ComboBoxItem
+                        ?? throw new InvalidOperationException("Device picker dropdown item missing");
+                    var texts = Descendants<TextBlock>(item).ToArray();
+                    Require(texts.Any(text => text.Text == longName && text.TextTrimming == TextTrimming.CharacterEllipsis),
+                        "long device name does not use ellipsis in the dropdown");
+                    Require(texts.Any(text => text.Text.Contains(option.Serial, StringComparison.Ordinal) &&
+                        text.Text.Contains("在线", StringComparison.Ordinal) && text.TextTrimming == TextTrimming.None),
+                        "dropdown does not display the full serial and online status");
+                    Require(texts.All(text => text.TextWrapping == TextWrapping.NoWrap), "dropdown item wraps");
+                    Equal(option.DisplayText, AutomationProperties.GetName(item));
+                    Equal(option.DisplayText, item.ToolTip as string);
+                }
                 picker.IsDropDownOpen = false; settings.AutoCollapse = false; Invoke("UpdateView");
+                await Layout();
+                var selection = Descendants<TextBlock>(picker).Single(text => text.Text == longName);
+                Equal(TextWrapping.NoWrap, selection.TextWrapping);
+                Equal(TextTrimming.CharacterEllipsis, selection.TextTrimming);
+                Equal(((DevicePicker.DeviceOption)picker.SelectedItem).DisplayText, picker.ToolTip as string);
                 await InspectDialog(() => ClickAction("info"), async dialog =>
                 {
                     Require(Output(dialog).Text.Contains("UI Fixture Phone UI-C", StringComparison.Ordinal), "full switcher did not send the selected serial to ADB -s");
@@ -201,6 +288,54 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal(4, shortcuts.Length);
                 foreach (var shortcut in shortcuts)
                     Equal(((DeviceRow)shortcut.DataContext).IsOnline, shortcut.IsEnabled);
+            });
+            await Check("screenshot picker creates its configured directory and recovers from an unusable path", async () =>
+            {
+                var oldDirectory = settings.ScreenshotDirectory;
+                var row = model.Devices.First(device => device.IsOnline);
+                Microsoft.Win32.SaveFileDialog OpenPicker() =>
+                    (Microsoft.Win32.SaveFileDialog)Invoke("CreateScreenshotPicker", row)!;
+                try
+                {
+                    settings.ScreenshotDirectory = Path.Combine(artifactDirectory, "新建截图目录", "screens");
+                    var picker = OpenPicker();
+                    Equal(settings.ScreenshotDirectory, picker.InitialDirectory);
+                    Require(Directory.Exists(picker.InitialDirectory), "first screenshot did not create its configured directory");
+                    settings.ScreenshotDirectory = Path.Combine(snapshotFile, "not-a-directory");
+                    await InspectDialog(() => picker = OpenPicker(), async dialog =>
+                    {
+                        Require(Output(dialog).Text.Contains(settings.ScreenshotDirectory), "unusable screenshot directory missing from feedback");
+                        await Task.CompletedTask;
+                    });
+                    Require(string.IsNullOrEmpty(picker.InitialDirectory), "picker cannot fall back to another folder");
+                }
+                finally { settings.ScreenshotDirectory = oldDirectory; }
+            });
+            await Check("list camera saves PNGs directly to the configured folder for the clicked device", async () =>
+            {
+                var oldDirectory = settings.ScreenshotDirectory;
+                try
+                {
+                    settings.ScreenshotDirectory = Path.Combine(artifactDirectory, "快捷截图");
+                    var camera = Descendants<Button>(Named<ItemsControl>("DeviceList")).Single(button =>
+                        AutomationProperties.GetName(button) == "保存此设备截图" && button.DataContext is DeviceRow { Serial: "UI-D" });
+                    Require(camera.Content is Viewbox, "quick screenshot does not display the camera glyph");
+                    for (var count = 1; count <= 2; count++)
+                    {
+                        camera.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        await Until(() => Directory.Exists(settings.ScreenshotDirectory)
+                            && Directory.GetFiles(settings.ScreenshotDirectory, "*.png").Length == count
+                            && !Field<HashSet<string>>(window, "busy").Contains("UI-D"));
+                    }
+                    Require(model.Selected is null && !window.OwnedWindows.Cast<Window>().Any(dialog => dialog.IsVisible),
+                        "quick screenshot changed the selected device or opened a dialog");
+                    Require(File.ReadAllLines(snapshotFile + ".screenshots").SequenceEqual(new[] { "UI-D", "UI-D" }),
+                        "quick screenshot did not use the clicked serial");
+                    Require(Named<Button>("OpenLatestScreenshotButton").IsVisible, "screenshot completion has no open action");
+                    Require(Directory.GetFiles(settings.ScreenshotDirectory, "*.png").All(path => File.ReadAllBytes(path)[0] == 0x89),
+                        "quick screenshot did not save PNG data");
+                }
+                finally { settings.ScreenshotDirectory = oldDirectory; }
             });
             await Check("released card drag collapses immediately at all four edges", async () =>
             {
@@ -290,6 +425,25 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 }
                 Named<Button>("EdgeArrow").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 await Layout(); Require(!Field<bool>(window, "collapsed"), "dedicated expand control did not open the panel");
+            });
+            await Check("edge icons catch up after a stationary summary press or lost capture", async () =>
+            {
+                await ReleaseCardAtEdge(DockSide.Right);
+                var summary = Named<Border>("EdgeSummary");
+                bool HasIcon(string serial) => Named<StackPanel>("EdgeDevices").Children.OfType<Button>()
+                    .Any(button => button.DataContext is DeviceRow row && row.Serial == serial);
+                foreach (var loseCapture in new[] { false, true })
+                {
+                    var point = summary.PointToScreen(new Point(summary.ActualWidth / 2, summary.ActualHeight / 2));
+                    var start = new NativePoint { X = (int)point.X, Y = (int)point.Y };
+                    Invoke("BeginSummaryPress", start);
+                    await SetSnapshot(Initial.Replace("UI-D device", "UI-Z device"), () => model.Devices.Any(row => row.Serial == "UI-Z"));
+                    Require(summary.IsMouseCaptured && HasIcon("UI-D"), "fixture did not defer the update during capture");
+                    if (loseCapture) summary.ReleaseMouseCapture();
+                    else Invoke("FinishPress", false, start);
+                    Require(HasIcon("UI-Z") && !HasIcon("UI-D"), "released tab still shows the previous device");
+                    await SetSnapshot(Initial, () => model.Devices.Any(row => row.Serial == "UI-D"));
+                }
             });
             await Check("auto-collapse honors enabled state, configured deadline and original-tab grace", async () =>
             {
@@ -407,101 +561,96 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal(edgeStart.Top, Desktop.Bounds(window).Top);
                 await VerifyActualLeaveTimerTick();
             });
-            await Check("edge device preview stays independent, targets actions and closes after five seconds outside", async () =>
+            await Check("edge device opens the compact main action surface for the exact device", async () =>
             {
                 settings.AutoCollapse = false;
                 Invoke("OpenDevice", model.Devices.Single(row => row.Serial == "UI-C"));
                 await ReleaseCardAtEdge(DockSide.Right);
-                var compact = Desktop.Bounds(window); var selected = model.Selected?.Serial;
-                var button = Named<StackPanel>("EdgeDevices").Children.OfType<Button>()
-                    .Single(item => item.DataContext is DeviceRow { Serial: "UI-D" });
+                Button EdgeButton(string serial) => Named<StackPanel>("EdgeDevices").Children.OfType<Button>()
+                    .Single(item => item.DataContext is DeviceRow row && row.Serial == serial);
+                var button = EdgeButton("UI-D");
                 RaiseMouseEvent(button, Mouse.MouseEnterEvent); await Task.Delay(250);
-                Require(Field<bool>(window, "collapsed") && Field<Window?>(window, "devicePreview") is null, "device hover opened a panel");
+                Require(Field<bool>(window, "collapsed"), "device hover opened the main panel");
                 button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
-                var preview = Field<Window?>(window, "devicePreview") ?? throw new InvalidOperationException("device preview did not open");
-                Require(preview.IsVisible && window.OwnedWindows.Cast<Window>().Contains(preview), "preview is not an independent owned window");
-                Equal("UI-D", PreviewSerial(preview)); Equal(selected, model.Selected?.Serial);
-                Require(Field<bool>(window, "collapsed"), "device preview expanded the main panel"); EqualBounds(compact, Desktop.Bounds(window));
-                Within(Desktop.Bounds(preview), Desktop.WorkArea(window));
-                Require(Desktop.Bounds(preview).Right <= compact.Left, "preview did not use the available space to the tab's left");
-                var previewPicker = Descendants<ComboBox>(preview).Single(control => AutomationProperties.GetAutomationId(control) == "PreviewDeviceSwitcher");
-                Require(PickerOptions(previewPicker).Select(option => option.Serial).ToHashSet().SetEquals(new[] { "UI-C", "UI-D", "UI-A", "UI-B" }),
-                    "preview picker does not include every discovered state");
-                previewPicker.SelectedValue = "UI-C"; await Layout();
-                Require(ReferenceEquals(preview, Field<Window?>(window, "devicePreview")), "picker switching replaced the modeless preview");
-                Equal("UI-C", PreviewSerial(preview)); Equal(selected, model.Selected?.Serial);
-                previewPicker.IsDropDownOpen = true; await Layout();
-                var dropdownOutside = OutsidePoint(); var dropdownNow = Environment.TickCount64;
-                Invoke("EvaluatePreviewLeave", dropdownOutside, dropdownNow); Invoke("EvaluatePreviewLeave", dropdownOutside, dropdownNow + 20_000);
-                Require(preview.IsVisible, "open preview device dropdown expired its owner");
-                previewPicker.SelectedValue = "UI-B"; await Layout(); previewPicker.IsDropDownOpen = false;
-                Equal("UI-B", PreviewSerial(preview)); Equal(selected, model.Selected?.Serial);
-                Require(PreviewActions(preview).All(action => !action.IsEnabled), "offline preview selection retained a live action");
-                Require(preview.FindName("Feedback") is TextBlock { Text.Length: > 0 }, "offline preview has no guidance");
-                previewPicker.SelectedValue = "UI-D"; await Layout();
-                Equal("UI-D", PreviewSerial(preview)); Require(PreviewActions(preview).All(action => action.IsEnabled), "switching back online did not restore actions");
-                Capture(preview, "15-device-preview.png");
-                var info = Descendants<Button>(preview).Single(item => AutomationProperties.GetAutomationId(item) == "PreviewAction:info");
-                await InspectDialog(() => info.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)), async dialog =>
+                Require(!Field<bool>(window, "collapsed") && Named<StackPanel>("DetailPanel").IsVisible, "edge click did not open the action panel");
+                Require(!window.OwnedWindows.Cast<Window>().Any(item => item.IsVisible), "edge click created a second surface");
+                Equal("UI-D", model.Selected?.Serial);
+                Equal("UI-D", Named<ComboBox>("DeviceSwitcher").SelectedValue as string);
+                Within(Desktop.Bounds(window), Desktop.WorkArea(window));
+                var heading = Named<TextBlock>("DeviceActionsHeading");
+                var picker = Named<ComboBox>("DeviceSwitcher");
+                Require(ReferenceEquals(heading.Parent, picker.Parent), "device picker is not on the action heading row");
+                var actions = Named<UniformGrid>("Actions").Children.OfType<Button>().ToArray();
+                Require(actions.Length == 6 && actions.All(action => action.ActualHeight is >= 44 and <= 62),
+                    "compact action panel does not contain six smaller buttons");
+                Require(Named<ScrollViewer>("ContentScroll").ScrollableHeight < 1, "the six compact actions do not fit the panel");
+                Capture(window, "15-edge-selected-device.png");
+                await InspectDialog(() => ClickAction("info"), async dialog =>
                 {
-                    Require(ReferenceEquals(dialog.Owner, preview), "preview action dialog has the wrong owner");
-                    Require(Output(dialog).Text.Contains("UI Fixture Phone UI-D", StringComparison.Ordinal), "preview switcher did not send the selected serial to ADB -s");
-                    Equal(selected, model.Selected?.Serial); EqualBounds(compact, Desktop.Bounds(window));
-                    Require(Field<bool>(window, "collapsed"), "preview action changed the main panel");
-                    var outside = OutsidePoint(); var now = Environment.TickCount64;
-                    Invoke("EvaluatePreviewLeave", outside, now); Invoke("EvaluatePreviewLeave", outside, now + 20_000);
-                    Require(preview.IsVisible, "preview closed its active action dialog");
+                    Require(ReferenceEquals(dialog.Owner, window), "device action dialog has the wrong owner");
+                    Require(Output(dialog).Text.Contains("UI Fixture Phone UI-D", StringComparison.Ordinal), "edge selection sent the wrong serial to ADB");
                     await Task.CompletedTask;
                 });
-                previewPicker.SelectedValue = "UI-C"; await Layout();
-                Require(ReferenceEquals(preview, Field<Window?>(window, "devicePreview")), "switching device replaced the modeless preview");
-                Equal("UI-C", PreviewSerial(preview)); Equal(selected, model.Selected?.Serial);
-                previewPicker.SelectedValue = "UI-D"; await Layout();
-                await SetSnapshot(Initial.Replace("UI-D device", "UI-D offline", StringComparison.Ordinal),
-                    () => model.Devices.Single(row => row.Serial == "UI-D").Device.State == "offline");
-                Equal("UI-D", PreviewSerial(preview)); Equal("UI-D", previewPicker.SelectedValue as string);
-                Require(PreviewActions(preview).All(action => !action.IsEnabled), "device refresh left stale online preview actions");
-                Equal(selected, model.Selected?.Serial);
-                await SetSnapshot(Initial, () => model.Devices.Single(row => row.Serial == "UI-D").IsOnline);
-                Require(PreviewActions(preview).All(action => action.IsEnabled), "recovered device did not restore preview actions");
-                var removed = string.Join('\n', Initial.Split('\n').Where(line => !line.StartsWith("UI-D ", StringComparison.Ordinal)));
-                await SetSnapshot(removed, () => model.Devices.All(row => row.Serial != "UI-D"));
-                Require(Field<Window?>(window, "devicePreview") is null && !preview.IsVisible, "removed preview target remained selected");
-                await SetSnapshot(Initial, () => model.Devices.Count == 4);
-                Require(Field<Window?>(window, "devicePreview") is null, "device recovery replayed preview opening automatically");
-                button = Named<StackPanel>("EdgeDevices").Children.OfType<Button>().Single(item => item.DataContext is DeviceRow { Serial: "UI-D" });
-                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
-                preview = Field<Window?>(window, "devicePreview") ?? throw new InvalidOperationException("recovered device preview did not reopen");
-                Equal("UI-D", PreviewSerial(preview)); Equal(selected, model.Selected?.Serial);
-                var tabPoint = new NativePoint { X = compact.Left + compact.Width / 2, Y = compact.Top + compact.Height / 2 };
-                var previewBounds = Desktop.Bounds(preview);
-                var previewPoint = new NativePoint { X = previewBounds.Left + previewBounds.Width / 2, Y = previewBounds.Top + previewBounds.Height / 2 };
-                var external = OutsidePoint(); var origin = Environment.TickCount64;
-                Invoke("EvaluatePreviewLeave", tabPoint, origin); Invoke("EvaluatePreviewLeave", tabPoint, origin + 10_000);
-                Require(preview.IsVisible, "hovering the compact tab expired its preview");
-                origin += 10_001;
-                Invoke("EvaluatePreviewLeave", external, origin); Invoke("EvaluatePreviewLeave", external, origin + 4999);
-                Require(preview.IsVisible, "preview closed before 4999ms outside");
-                Invoke("EvaluatePreviewLeave", previewPoint, origin + 5000);
-                Invoke("EvaluatePreviewLeave", external, origin + 5001); Invoke("EvaluatePreviewLeave", external, origin + 10_000);
-                Require(preview.IsVisible, "preview re-entry did not reset the five-second grace");
-                Invoke("EvaluatePreviewLeave", tabPoint, origin + 10_001);
-                Invoke("EvaluatePreviewLeave", external, origin + 10_002); Invoke("EvaluatePreviewLeave", external, origin + 15_001);
-                Require(preview.IsVisible, "tab re-entry did not reset the preview grace");
-                Invoke("EvaluatePreviewLeave", external, origin + 15_002);
-                Require(Field<Window?>(window, "devicePreview") is null && !preview.IsVisible, "preview did not close at its independent five-second deadline");
-                Require(Field<bool>(window, "collapsed") && !settings.AutoCollapse, "preview timeout changed main auto-collapse behavior");
-                EqualBounds(compact, Desktop.Bounds(window)); Equal(selected, model.Selected?.Serial);
-                await ReleaseCardAtEdge(DockSide.Left);
-                button = Named<StackPanel>("EdgeDevices").Children.OfType<Button>().Single(item => item.DataContext is DeviceRow { Serial: "UI-D" });
-                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
-                var reopened = Field<Window?>(window, "devicePreview") ?? throw new InvalidOperationException("preview did not reopen");
-                Require(Desktop.Bounds(reopened).Left >= Desktop.Bounds(window).Right, "preview did not use the right fallback when left space was unavailable");
-                Within(Desktop.Bounds(reopened), Desktop.WorkArea(window));
-                Capture(reopened, "16-device-preview-left-edge.png");
+
+                Invoke("CollapsePanel"); await Layout();
+                await InspectDialog(() => EdgeButton("UI-A").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)), async dialog =>
+                {
+                    Require(Output(dialog).Text.Contains("UI-A"), "unavailable device guidance has the wrong target");
+                    Require(model.Selected is null && Named<StackPanel>("ListPanel").IsVisible, "unavailable icon selected live actions");
+                    await Task.CompletedTask;
+                });
+                Invoke("CollapsePanel"); await Layout();
                 Named<Button>("EdgeArrow").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
-                Require(!Field<bool>(window, "collapsed") && Field<Window?>(window, "devicePreview") is null && !reopened.IsVisible,
-                    "expanding the main panel did not close the independent preview");
+                Require(!Field<bool>(window, "collapsed") && model.Selected is null && Named<StackPanel>("ListPanel").IsVisible,
+                    "the general Expand button did not open all devices");
+            });
+            await Check("device remarks persist by serial and label the edge device", async () =>
+            {
+                async Task SaveRemark(string text, Action? open = null)
+                {
+                    await InspectDialog(open ?? (() => Named<Button>("AliasButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent))), async dialog =>
+                    {
+                        var input = Descendants<TextBox>(dialog).Single(control => AutomationProperties.GetAutomationId(control) == "DeviceAliasInput");
+                        var save = Descendants<Button>(dialog).Single(control => AutomationProperties.GetAutomationId(control) == "SaveDeviceAliasButton");
+                        input.Text = text;
+                        save.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        await Task.CompletedTask;
+                    });
+                    await Layout();
+                }
+
+                Invoke("OpenDevice", model.Devices.Single(row => row.Serial == "UI-C"));
+                await SaveRemark(" 测试机 ");
+                Equal("测试机", model.Selected?.Name);
+                var picker = Named<ComboBox>("DeviceSwitcher");
+                Equal("测试机", PickerOptions(picker).Single(option => option.Serial == "UI-C").Name);
+                Equal("测试机", new SettingsStore(artifactDirectory).Load().DeviceAliases["UI-C"]);
+                Invoke("CollapsePanel"); await Layout();
+                var edge = Named<StackPanel>("EdgeDevices").Children.OfType<Button>()
+                    .Single(item => item.DataContext is DeviceRow { Serial: "UI-C" });
+                Equal("测", Descendants<TextBlock>(edge).Single(label => AutomationProperties.GetAutomationId(label) == "EdgeDeviceLabel").Text);
+                edge.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
+                Equal("UI-C", model.Selected?.Serial);
+                await SaveRemark(" ");
+                Equal("Fixture One", model.Selected?.Name);
+                Require(!new SettingsStore(artifactDirectory).Load().DeviceAliases.ContainsKey("UI-C"), "cleared remark remained on disk");
+                Invoke("BackClick", window, new RoutedEventArgs()); await Layout();
+
+                var unavailable = Descendants<Button>(Named<ItemsControl>("DeviceList")).Single(item =>
+                    item.DataContext is DeviceRow { Serial: "UI-A" } && AutomationProperties.GetAutomationId(item) == "DeviceRowButton");
+                var menu = unavailable.ContextMenu;
+                menu.PlacementTarget = unavailable;
+                try
+                {
+                    menu.IsOpen = true;
+                    await Layout();
+                    var edit = menu.Items.OfType<MenuItem>().Single();
+                    Require(edit.CommandParameter is DeviceRow { Serial: "UI-A" }, "row context menu targeted the wrong device");
+                    await SaveRemark("待授权机", () => edit.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)));
+                }
+                finally { menu.IsOpen = false; }
+                Equal("待授权机", model.Devices.Single(row => row.Serial == "UI-A").Name);
+                Equal("待授权机", new SettingsStore(artifactDirectory).Load().DeviceAliases["UI-A"]);
             });
             await Check("context menu suspends auto collapse and restores the full leave grace", async () =>
             {
@@ -639,6 +788,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Count == 4);
                 Equal("2", model.OnlineCount);
             });
+            await Check("an active installation and mirror survive discovery failures until a confirmed disconnect", DiscoveryDuringOperationsAsync);
             await Check("operation detail survives subsequent listener snapshots", async () =>
             {
                 const string detail = "UI result retained after refresh: complete diagnostic output";
@@ -770,40 +920,171 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal(buffer.TotalCount, buffer.VisibleLines.Count);
                 await Task.CompletedTask;
             });
+            await Check("full Logcat view virtualizes rolling logs and preserves paused history until catch-up", async () =>
+            {
+                var log = new LogWindow("LOG-LIMIT-FIXTURE", Field<AdbOperations>(window, "operations")) { Owner = window };
+                try
+                {
+                    log.Show();
+                    await Layout();
+                    const int capacity = LogFilterBuffer.MaximumLines, batch = 500, batches = 6;
+                    var lines = Enumerable.Range(0, capacity + batch * batches)
+                        .Select(i => i + " 日志 " + new string('x', 770 + i % 41)).ToArray();
+                    lines[4] = lines[15000] = lines[15002] = "repeated log";
+                    lines[15001] = "selected middle";
+                    log.AppendLines(lines.Take(capacity));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    var output = LogList(log);
+                    var selectedDuplicate = output.Items[15002];
+                    output.SelectedItems.Add(selectedDuplicate);
+                    output.SelectedItems.Add(output.Items[15001]);
+                    output.SelectedItems.Add(output.Items[4]);
+                    Equal(string.Join(Environment.NewLine, new[] { "repeated log", "selected middle", "repeated log" }), log.GetSelectedText());
+                    var host = Descendants<VirtualizingStackPanel>(log).Single();
+                    var scroll = Descendants<ScrollViewer>(output).Single();
+                    object? reading = null;
+                    var rollingTime = Stopwatch.StartNew();
+                    for (var i = 0; i < batches; i++)
+                    {
+                        if (i == batches / 2)
+                        {
+                            scroll.ScrollToVerticalOffset(7000);
+                            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                            Equal(7000d, host.VerticalOffset);
+                            reading = output.Items[(int)host.VerticalOffset];
+                        }
+                        int offset = i * batch;
+                        var chunk = lines.AsSpan(capacity + offset, batch).ToArray();
+                        log.AppendLines(chunk);
+                        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                        Equal(capacity, output.Items.Count);
+                        Equal(lines[offset + batch], output.Items[0].ToString());
+                        Equal(chunk[^1], output.Items[capacity - 1].ToString());
+                        if (reading is null)
+                            Require(host.VerticalOffset + host.ViewportHeight >= host.ExtentHeight - 1, "Logcat stopped following the newest batch");
+                        else
+                            Require(ReferenceEquals(reading, output.Items[(int)host.VerticalOffset]), "rolling updates moved the historical line being read");
+                        Require(host.Children.Count is > 0 and < 200, "Logcat laid out more than its viewport and prefetch rows");
+                        Require(output.ItemContainerGenerator.ContainerFromIndex(capacity / 2) is null, "offscreen log rows were materialized");
+                    }
+                    Console.WriteLine($"INFO Logcat applied {batches} batches of {batch} to the full view in {rollingTime.ElapsedMilliseconds} ms");
+                    Require(output.SelectedItems.Contains(selectedDuplicate) && output.SelectedItems.Count == 2, "selection lost row identity during eviction");
+                    Equal("selected middle" + Environment.NewLine + "repeated log", log.GetSelectedText());
+                    Equal(string.Join(Environment.NewLine, lines.Skip(batch * batches)) + Environment.NewLine, log.GetOutputText());
+
+                    var pause = Descendants<Button>(log).Single(button => AutomationProperties.GetAutomationId(button) == "LogPauseButton");
+                    var retained = Field<LogFilterBuffer>(log, "buffer");
+                    var pausedOffset = host.VerticalOffset;
+                    var firstVisible = output.Items[0];
+                    var lastVisible = output.Items[capacity - 1];
+                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    const int overflow = 125;
+                    log.AppendLines(Enumerable.Range(0, capacity + overflow).Select(i => "paused log " + i));
+                    await Until(() => Equals(pause.Content, $"回到最新（新增 {capacity + overflow:N0} 行）"));
+                    Equal(capacity, retained.TotalCount);
+                    Equal(capacity, output.Items.Count);
+                    Equal(pausedOffset, host.VerticalOffset);
+                    Require(ReferenceEquals(firstVisible, output.Items[0]) && ReferenceEquals(lastVisible, output.Items[capacity - 1]),
+                        "paused view changed after the raw cache rolled over");
+                    Require(output.SelectedItems.Contains(selectedDuplicate), "paused view lost its selection");
+
+                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Equal(capacity, output.Items.Count);
+                    Equal("paused log " + overflow, output.Items[0].ToString());
+                    Equal("paused log " + (capacity + overflow - 1), output.Items[capacity - 1].ToString());
+                    Require(host.VerticalOffset + host.ViewportHeight >= host.ExtentHeight - 1, "resuming from paused history did not jump to the latest line");
+                    Require(host.Children.Count is > 0 and < 200, "catch-up materialized offscreen log rows");
+                }
+                finally { log.Close(); }
+            });
+            await Check("Logcat opens selectable original text by double-click and Enter", async () =>
+            {
+                var log = new LogWindow("LOG-DETAIL-FIXTURE", Field<AdbOperations>(window, "operations")) { Owner = window };
+                try
+                {
+                    log.Show();
+                    var rows = new[] { "I/example: id=4102", "W/example: id=5203" };
+                    log.AppendLines(rows);
+                    await Layout();
+                    var list = LogList(log);
+                    var item = (ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.Items[1]);
+                    await InspectDialog(() => item.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+                    {
+                        RoutedEvent = Control.MouseDoubleClickEvent
+                    }), dialog => InspectText(dialog, rows[1], "5203"));
+                    list.SelectedItems.Add(list.Items[0]);
+                    if (!list.SelectedItems.Contains(list.Items[1])) list.SelectedItems.Add(list.Items[1]);
+                    await InspectDialog(() => list.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(list)!, Environment.TickCount, Key.Enter)
+                    {
+                        RoutedEvent = Keyboard.PreviewKeyDownEvent
+                    }), dialog => InspectText(dialog, string.Join(Environment.NewLine, rows), "4102"));
+
+                    Task InspectText(Window dialog, string expected, string fragment)
+                    {
+                        Require(ReferenceEquals(log, dialog.Owner), "log detail has the wrong owner");
+                        var text = Output(dialog);
+                        Require(text.IsReadOnly, "log detail is editable");
+                        Equal(expected, text.Text);
+                        text.Select(text.Text.IndexOf(fragment, StringComparison.Ordinal), fragment.Length);
+                        Equal(fragment, text.SelectedText);
+                        Require(ApplicationCommands.Copy.CanExecute(null, text), "cannot copy the selected log fragment");
+                        return Task.CompletedTask;
+                    }
+                }
+                finally { log.Close(); }
+            });
             await Check("Logcat regex UI filters live output, clears errors, pauses and stops its client", async () =>
             {
                 Task? reader = null;
                 await InspectDialog(() => ClickAction("logcat"), async dialog =>
                 {
-                    Require(dialog is LogWindow, "incorrect Logcat dialog");
-                    await Until(() => Output(dialog).Text.Contains("UI-2 test log"));
+                    if (dialog is not LogWindow log) throw new InvalidOperationException("incorrect Logcat dialog");
+                    await Until(() => VisibleLogText(dialog).Contains("UI-2 test log"));
                     reader = Field<Task>(dialog, "reader");
-                    var pause = Descendants<Button>(dialog).Single(button => Equals(button.Content, "暂停显示"));
-                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-                    var before = Output(dialog).Text; await Task.Delay(400); Equal(before, Output(dialog).Text);
-                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-                    await Until(() => Output(dialog).Text != before);
+                    var pause = Descendants<Button>(dialog).Single(button => AutomationProperties.GetAutomationId(button) == "LogPauseButton");
                     var filter = Descendants<TextBox>(dialog).Single(box => AutomationProperties.GetAutomationId(box) == "LogFilterInput");
                     var clear = Descendants<Button>(dialog).Single(button => AutomationProperties.GetAutomationId(button) == "ClearLogFilterButton");
                     var status = Descendants<TextBlock>(dialog).Single(block => AutomationProperties.GetAutomationId(block) == "LogFilterStatus");
                     filter.Text = @"test log \d*[02468]$";
-                    await Until(() => HasOnlyEvenLogLines(Output(dialog).Text));
-                    var matched = Output(dialog).Text;
-                    await Until(() => Output(dialog).Text != matched && HasOnlyEvenLogLines(Output(dialog).Text));
+                    await Until(() => HasOnlyEvenLogLines(VisibleLogText(dialog)));
+                    var matched = VisibleLogText(dialog);
+                    await Until(() => VisibleLogText(dialog) != matched && HasOnlyEvenLogLines(VisibleLogText(dialog)));
                     Capture(dialog, "11-logcat-regex-filter.png");
+
+                    var buffer = Field<LogFilterBuffer>(dialog, "buffer");
+                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    const string emptyPause = "回到最新（新增 0 行）";
+                    Equal(emptyPause, pause.Content);
+                    Require(!filter.IsEnabled && !clear.IsEnabled, "filter controls can change the paused view");
+                    var before = log.GetOutputText();
+                    var rawAtPause = buffer.TotalCount;
+                    await Until(() => buffer.TotalCount >= rawAtPause + 4 && !Equals(emptyPause, pause.Content));
+                    Equal(before, log.GetOutputText());
+
+                    var rawBeforeResume = buffer.TotalCount;
+                    pause.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    Equal("暂停显示", pause.Content);
+                    Require(filter.IsEnabled && clear.IsEnabled, "filter controls stayed disabled after catch-up");
+                    var resumed = VisibleLogText(dialog);
+                    Require(HasOnlyEvenLogLines(resumed), "catch-up did not respect the active regex");
+                    var pausedMatchingLine = (rawBeforeResume - 1) / 2 * 2;
+                    Require(LogLines(resumed).Any(line => line.EndsWith("test log " + pausedMatchingLine, StringComparison.Ordinal)),
+                        "catch-up lost a matching line received while paused");
+
                     filter.Text = "^WILL_NOT_MATCH$";
-                    await Until(() => Output(dialog).Text.Length == 0);
-                    await Task.Delay(400); Equal("", Output(dialog).Text);
+                    await Until(() => VisibleLogText(dialog).Length == 0);
+                    await Task.Delay(400); Equal("", VisibleLogText(dialog));
                     filter.Text = @"test log \d*[02468]$";
-                    await Until(() => HasOnlyEvenLogLines(Output(dialog).Text));
+                    await Until(() => HasOnlyEvenLogLines(VisibleLogText(dialog)));
                     filter.Text = "(";
                     await Until(() => HasFilterError(status.Text));
-                    Require(Output(dialog).Text.Contains("UI-2 test log"), "invalid regex erased last valid output");
+                    Require(VisibleLogText(dialog).Contains("UI-2 test log"), "invalid regex erased last valid output");
                     Require(reader?.IsFaulted == false, "invalid regex terminated the log reader");
                     Capture(dialog, "12-logcat-invalid-regex.png");
                     clear.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                     await Until(() => filter.Text.Length == 0 && !HasFilterError(status.Text));
-                    Require(LogLines(Output(dialog).Text).Any(line => "13579".Contains(line[^1])), "clearing regex did not reveal retained odd-numbered logs");
+                    Require(LogLines(VisibleLogText(dialog)).Any(line => "13579".Contains(line[^1])), "clearing regex did not reveal retained odd-numbered logs");
                     Capture(dialog, "09-logcat.png");
                 });
                 await Until(() => reader?.IsCompleted == true);
@@ -845,7 +1126,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
             exitRequestSent = request.Set();
         };
         dialog.Closed += (_, _) => { timeout.Stop(); exitDialogClosed = true; };
-        Invoke("ShowOwned", dialog, window);
+        Invoke("ShowOwned", dialog);
     }
 
     private void OnExit(object? sender, ExitEventArgs e)
@@ -898,6 +1179,53 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
         timer.Start();
         try { trigger(); await completion.Task.WaitAsync(TimeSpan.FromSeconds(15)); }
         finally { timer.Stop(); }
+    }
+
+    private async Task DiscoveryDuringOperationsAsync()
+    {
+        const string serial = "UI-C";
+        var row = model.Devices.Single(device => device.Serial == serial);
+        await (Task)Invoke("RunDeviceActionAsync", row, "mirror")!;
+        using var mirror = Process.GetProcessById(int.Parse(File.ReadAllText(snapshotFile + ".mirror-pid")));
+        var operations = Field<AdbOperations>(window, "operations");
+        using var cleanup = new CancellationTokenSource();
+        var apk = snapshotFile + ".apk";
+        var started = apk + ".started";
+        var restart = snapshotFile + ".restart-tracker";
+        try
+        {
+            File.Create(apk).Dispose();
+            var install = operations.InstallAsync(serial, apk, cleanup.Token);
+            await Until(() => File.Exists(started));
+            File.Create(restart).Dispose();
+            await Until(() => model.ListenerWarning is not null);
+            Require(model.AdbAvailable && model.Caption.Contains("监听恢复中") && model.Devices.Any(d => d.Serial == serial && d.IsOnline),
+                "tracker failure hid the online device or recovery indicator");
+            File.Delete(restart);
+            await Until(() => model.ListenerWarning is null);
+            Require(!install.IsCompleted && !mirror.HasExited, "tracker restart stopped an online device's clients");
+
+            await SetSnapshot("ERROR:temporary devices -l failure", () => !model.AdbAvailable);
+            await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Any(d => d.Serial == serial && d.IsOnline));
+            File.Delete(apk);
+            await install.WaitAsync(TimeSpan.FromSeconds(10));
+            Require(!mirror.HasExited, "failed list query stopped the existing mirror process");
+
+            File.Delete(started);
+            File.Create(apk).Dispose();
+            var nextInstall = operations.InstallAsync(serial, apk, cleanup.Token);
+            await Until(() => File.Exists(started));
+            await SetSnapshot(Initial.Replace("UI-C device", "UI-C offline"), () => model.Devices.Any(d => d.Serial == serial && !d.IsOnline));
+            await Until(() => nextInstall.IsCompleted && mirror.HasExited);
+            Require(nextInstall.IsCanceled, "confirmed offline device did not cancel its installation");
+        }
+        finally
+        {
+            cleanup.Cancel();
+            File.Delete(apk);
+            File.Delete(restart);
+            await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Any(d => d.Serial == serial && d.IsOnline));
+        }
     }
 
     private async Task SetSnapshot(string text, Func<bool> predicate)
@@ -1072,13 +1400,9 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
         }
     }
     private static TextBox Output(Window dialog) => Descendants<TextBox>(dialog).Single(box => AutomationProperties.GetAutomationId(box) == "TextOutput");
-    private static string PreviewSerial(Window preview) => Descendants<TextBlock>(preview).Single(block => AutomationProperties.GetAutomationId(block) == "PreviewSerial").Text;
     private static DevicePicker.DeviceOption[] PickerOptions(ComboBox picker) => picker.Items.Cast<DevicePicker.DeviceOption>().ToArray();
-    private static Button[] PreviewActions(Window preview)
-    {
-        var actions = new[] { "mirror", "screenshot", "install", "keys", "info", "logcat" };
-        return actions.Select(action => Descendants<Button>(preview).Single(button => AutomationProperties.GetAutomationId(button) == "PreviewAction:" + action)).ToArray();
-    }
+    private static ListBox LogList(Window dialog) => Descendants<ListBox>(dialog).Single(list => AutomationProperties.GetAutomationId(list) == "LogLines");
+    private static string VisibleLogText(Window dialog) => string.Join(Environment.NewLine, LogList(dialog).Items.Cast<object>());
     private static string[] LogLines(string text) => text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
     private static bool HasOnlyEvenLogLines(string text) => LogLines(text) is { Length: > 0 } lines && lines.All(line => "02468".Contains(line[^1]));
     private static bool HasFilterError(string text) => text.Contains("无效") || text.Contains("错误") || text.Contains("失败");

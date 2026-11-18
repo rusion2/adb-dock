@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace AdbDock.App;
@@ -13,18 +15,31 @@ public sealed class LogFilterBuffer
     public static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(25);
     public static readonly TimeSpan RefilterBudget = TimeSpan.FromMilliseconds(150);
 
-    private sealed class LogLine(string text)
+    internal sealed class LogLine(long number, string text)
     {
+        public long Number { get; } = number;
         public string Text { get; } = text;
-        public bool IsVisible { get; set; }
-        public bool IsRetained { get; set; } = true;
+        public override string ToString() => Text;
     }
 
-    private readonly Queue<LogLine> raw = new();
+    private sealed class LineTextList(List<LogLine> rows) : IReadOnlyList<string>
+    {
+        public int Count => rows.Count;
+        public string this[int index] => rows[index].Text;
+        public IEnumerator<string> GetEnumerator() => rows.Select(row => row.Text).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    // The reader writes the raw cache. The dispatcher owns the filtered rows.
+    private readonly object rawGate = new();
+    private readonly LinkedList<LogLine> raw = new();
     private readonly int capacity;
     private readonly int maxLineLength;
     private readonly int maxCharacters;
-    private List<string> visible = new();
+    private readonly List<LogLine> visible = new();
+    private int totalCharacters;
+    private long receivedLineCount;
+    private long lastDisplayedLineNumber;
     private Regex? expression;
     private string requestedPattern = "";
     private bool hasRequestedPattern;
@@ -37,16 +52,18 @@ public sealed class LogFilterBuffer
         this.capacity = capacity;
         this.maxLineLength = Math.Min(maxLineLength, maxCharacters);
         this.maxCharacters = maxCharacters;
+        VisibleLines = new LineTextList(visible);
     }
 
-    public int TotalCount => raw.Count;
-    public int TotalCharacters { get; private set; }
-    public IReadOnlyList<string> VisibleLines => visible;
+    public int TotalCount { get { lock (rawGate) return raw.Count; } }
+    public int TotalCharacters { get { lock (rawGate) return totalCharacters; } }
+    internal long ReceivedLineCount { get { lock (rawGate) return receivedLineCount; } }
+    public IReadOnlyList<string> VisibleLines { get; }
+    internal IReadOnlyList<LogLine> VisibleRows => visible;
+    internal int LastRemovedVisibleLines { get; private set; }
     public string ActivePattern { get; private set; } = "";
     public string? FilterError { get; private set; }
     public bool IsFilterSuspended { get; private set; }
-    internal int LastRemovedVisibleLines { get; private set; }
-    internal IReadOnlyList<string> LastAppendedVisibleLines { get; private set; } = Array.Empty<string>();
 
     public bool SetFilter(string pattern)
     {
@@ -66,12 +83,19 @@ public sealed class LogFilterBuffer
             return false;
         }
 
-        if (!TryFilter(candidate, raw, out var matches)) return false;
+        LogLine[] retainedLines;
+        long latestLineNumber;
+        lock (rawGate)
+        {
+            retainedLines = raw.ToArray();
+            latestLineNumber = receivedLineCount;
+        }
+        if (!TryFilter(candidate, retainedLines, out var matches)) return false;
         expression = candidate;
         ActivePattern = pattern;
-        foreach (var line in raw) line.IsVisible = false;
-        visible = new List<string>(matches.Count);
-        foreach (var line in matches) { line.IsVisible = true; visible.Add(line.Text); }
+        visible.Clear();
+        visible.AddRange(matches);
+        lastDisplayedLineNumber = latestLineNumber;
         FilterError = null;
         IsFilterSuspended = false;
         return true;
@@ -79,60 +103,86 @@ public sealed class LogFilterBuffer
 
     public bool Append(string line)
     {
-        ArgumentNullException.ThrowIfNull(line);
-        return Append(new[] { line });
+        Retain(line);
+        return UpdateVisible();
     }
 
     public bool Append(IEnumerable<string> lines)
     {
-        ArgumentNullException.ThrowIfNull(lines);
-        LastRemovedVisibleLines = 0;
-        LastAppendedVisibleLines = Array.Empty<string>();
-        var pending = new List<LogLine>();
-        var removedVisible = 0;
-        foreach (var line in lines)
-        {
-            ArgumentNullException.ThrowIfNull(line);
-            var retained = new LogLine(line.Length > maxLineLength ? line[..maxLineLength] : line);
-            raw.Enqueue(retained);
-            pending.Add(retained);
-            TotalCharacters += retained.Text.Length;
-            while (raw.Count > capacity || TotalCharacters > maxCharacters)
-            {
-                var removed = raw.Dequeue();
-                removed.IsRetained = false;
-                TotalCharacters -= removed.Text.Length;
-                if (removed.IsVisible) removedVisible++;
-            }
-        }
-        if (pending.Count == 0 || IsFilterSuspended) return false;
-        // Match only new retained lines. Refiltering the entire 20,000-line cache
-        // is reserved for an explicit expression change, not every stream tick.
-        if (!TryFilter(expression, pending, out var matches)) return false;
-        LastRemovedVisibleLines = Math.Min(removedVisible, visible.Count);
-        if (LastRemovedVisibleLines > 0) visible.RemoveRange(0, LastRemovedVisibleLines);
-        var addedVisible = new List<string>(matches.Count);
-        foreach (var line in matches) { line.IsVisible = true; addedVisible.Add(line.Text); }
-        visible.AddRange(addedVisible);
-        LastAppendedVisibleLines = addedVisible;
-        return true;
+        Retain(lines);
+        return UpdateVisible();
     }
 
-    private bool TryFilter(Regex? candidate, IEnumerable<LogLine> lines, out List<LogLine> matches)
+    internal void Retain(string line)
     {
-        var result = new List<LogLine>();
+        lock (rawGate) RetainLine(line);
+    }
+
+    internal void Retain(IEnumerable<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        lock (rawGate)
+        {
+            foreach (var line in lines) RetainLine(line);
+        }
+    }
+
+    private void RetainLine(string line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        var retained = new LogLine(++receivedLineCount, line.Length > maxLineLength ? line[..maxLineLength] : line);
+        raw.AddLast(retained);
+        totalCharacters += retained.Text.Length;
+        while (raw.Count > capacity || totalCharacters > maxCharacters)
+        {
+            totalCharacters -= raw.First!.Value.Text.Length;
+            raw.RemoveFirst();
+        }
+    }
+
+    internal bool UpdateVisible()
+    {
+        LastRemovedVisibleLines = 0;
+        if (IsFilterSuspended) return false;
+        List<LogLine> pending;
+        long oldestLineNumber;
+        long latestLineNumber;
+        lock (rawGate)
+        {
+            if (lastDisplayedLineNumber == receivedLineCount) return false;
+            oldestLineNumber = raw.First!.Value.Number;
+            latestLineNumber = receivedLineCount;
+            var newRetainedCount = (int)Math.Min(raw.Count, latestLineNumber - lastDisplayedLineNumber);
+            pending = new List<LogLine>(newRetainedCount);
+            for (var node = raw.Last; node is not null && node.Value.Number > lastDisplayedLineNumber; node = node.Previous)
+            {
+                pending.Add(node.Value);
+            }
+        }
+        pending.Reverse();
+        if (!TryFilter(expression, pending, out var matches)) return false;
+        var removedVisible = 0;
+        while (removedVisible < visible.Count && visible[removedVisible].Number < oldestLineNumber) removedVisible++;
+        if (removedVisible > 0) visible.RemoveRange(0, removedVisible);
+        LastRemovedVisibleLines = removedVisible;
+        visible.AddRange(matches);
+        lastDisplayedLineNumber = latestLineNumber;
+        return removedVisible > 0 || matches.Count > 0;
+    }
+
+    private bool TryFilter(Regex? candidate, IReadOnlyList<LogLine> lines, out IReadOnlyList<LogLine> matches)
+    {
         if (candidate is null)
         {
-            foreach (var line in lines) if (line.IsRetained) result.Add(line);
-            matches = result;
+            matches = lines;
             return true;
         }
+        var result = new List<LogLine>();
         var watch = Stopwatch.StartNew();
         try
         {
             foreach (var line in lines)
             {
-                if (!line.IsRetained) continue;
                 if (watch.Elapsed >= RefilterBudget) return Suspend(out matches);
                 if (candidate.IsMatch(line.Text)) result.Add(line);
             }
@@ -143,9 +193,9 @@ public sealed class LogFilterBuffer
         catch (RegexMatchTimeoutException) { return Suspend(out matches); }
     }
 
-    private bool Suspend(out List<LogLine> matches)
+    private bool Suspend(out IReadOnlyList<LogLine> matches)
     {
-        matches = new List<LogLine>();
+        matches = Array.Empty<LogLine>();
         IsFilterSuspended = true;
         FilterError = "正则筛选耗时过长，已暂停筛选。请简化表达式，修改后重试。";
         return false;

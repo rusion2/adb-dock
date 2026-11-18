@@ -420,12 +420,24 @@ internal static class Program
             WriteState(directory, "192.168.2.3:5555 device model:Polled_Phone\n");
             await UntilAsync(() => Latest(snapshots).Devices.FirstOrDefault()?.Name == "Polled Phone", "two-second fallback polling repairs missed notifications", TimeSpan.FromSeconds(4));
             File.Delete(Path.Combine(directory, "quiet.txt"));
-            WriteFixtureText(Path.Combine(directory, "exit-track.txt"), "");
-            await UntilAsync(() => snapshots.Any(snapshot => snapshot.Error?.Contains("监听") == true), "listener exit reports recovery state");
-            File.Delete(Path.Combine(directory, "exit-track.txt"));
-            await UntilAsync(() => CommandFiles(directory, "track-devices").Length >= 2 && Latest(snapshots).IsAvailable,
-                "listener retries under control and devices recover");
+            const string onlineSerial = "192.168.2.3:5555";
+            var beforeListenerExit = snapshots.Count;
+            WriteFixtureText(Path.Combine(directory, "exit-track.txt"), $"{onlineSerial} device model:Confirmed_Phone\n");
+            await UntilAsync(() => Latest(snapshots).Devices.FirstOrDefault()?.Name == "Confirmed Phone",
+                "devices -l confirms the same online serial after an unannounced listener exit");
+            await UntilAsync(() => CommandFiles(directory, "track-devices").Length >= 2, "listener restarts after exiting");
+            Check(snapshots.Skip(beforeListenerExit).All(snapshot => snapshot.IsAvailable &&
+                snapshot.Devices.Any(device => device.Serial == onlineSerial && device.IsOnline)),
+                "even a transient listener failure must not publish a false disconnect to active device sessions");
             Check(CommandFiles(directory, "track-devices").Length <= 4, "listener failure does not busy-loop");
+
+            WriteFixtureText(Path.Combine(directory, "exit-track.txt"), $"{onlineSerial} offline\n");
+            await UntilAsync(() => Latest(snapshots).Devices.FirstOrDefault()?.State == "offline",
+                "an authoritative offline state still reaches subscribers after listener loss");
+            Check(Latest(snapshots).IsAvailable && Latest(snapshots).OnlineCount == 0, "confirmed offline device is no longer online");
+            WriteState(directory, "");
+            await UntilAsync(() => Latest(snapshots) is { IsAvailable: true, Devices.Count: 0 },
+                "removing the device publishes an empty successful list");
 
             WriteFixtureText(Path.Combine(directory, "delay.txt"), "3000");
             using var cancellation = new CancellationTokenSource();
@@ -471,6 +483,8 @@ internal static class Program
         var defaults = store.Load();
         Check(defaults.Topmost && defaults.ShowFloatingTab && defaults.AutoCollapse && defaults.AutoCollapseDelaySeconds == 2 && !defaults.AutoStart,
             "missing configuration defaults to a visible floating tab and two-second automatic collapse");
+        Check(!defaults.HasConnectedDevice, "fresh settings have yet to see the first online device");
+        Equal(0, defaults.DeviceAliases.Count, "missing configuration has no device aliases");
         Check(store.LoadError is null, "missing configuration is not corruption");
         var settings = new AppSettings
         {
@@ -480,11 +494,18 @@ internal static class Program
             Topmost = false,
             ShowFloatingTab = false,
             AutoCollapse = false,
+            HasConnectedDevice = true,
             AutoCollapseDelaySeconds = 17,
             AutoStart = true,
             Side = DockSide.Top,
             WindowX = -1250,
-            WindowY = 240
+            WindowY = 240,
+            DeviceAliases = new(StringComparer.Ordinal)
+            {
+                ["ABC123"] = "办公机",
+                ["abc123"] = "📱 测试机",
+                ["192.168.1.27:5555"] = "无线设备"
+            }
         };
         store.Save(settings);
         Equal(JsonSerializer.Serialize(settings), JsonSerializer.Serialize(store.Load()), "all settings JSON round-trip");
@@ -504,10 +525,11 @@ internal static class Program
         Equal(corrupt, File.ReadAllText(backups[0]), "backup preserves original damaged bytes");
         Equal(JsonSerializer.Serialize(settings), JsonSerializer.Serialize(store.Load()), "configuration recovers after explicit save");
         Check(store.LoadError is null, "successful recovery clears load error");
-        File.WriteAllText(Path.Combine(directory, "settings.json"), "{\"AdbPath\":null,\"ScrcpyPath\":null,\"ScreenshotDirectory\":null,\"Side\":999}");
+        File.WriteAllText(Path.Combine(directory, "settings.json"), "{\"AdbPath\":null,\"ScrcpyPath\":null,\"ScreenshotDirectory\":null,\"DeviceAliases\":null,\"Side\":999}");
         var normalized = new SettingsStore(directory).Load();
         Equal("", normalized.AdbPath, "null adb path normalized");
         Equal("", normalized.ScrcpyPath, "null scrcpy path normalized");
+        Equal(0, normalized.DeviceAliases.Count, "null device aliases normalize to an empty mapping");
         Check(!string.IsNullOrWhiteSpace(normalized.ScreenshotDirectory), "null screenshot directory normalized");
         Equal(DockSide.None, normalized.Side, "invalid docking value normalized");
 
@@ -553,6 +575,7 @@ internal static class Program
         var currentPreferences = new SettingsStore(directory).Load();
         Check(currentPreferences.AutoCollapse && currentPreferences.AutoCollapseDelaySeconds == 5,
             "a stale pin field cannot override explicit preferences in the new schema");
+        Equal(0, currentPreferences.DeviceAliases.Count, "older configuration without a device alias field still loads");
         return Task.CompletedTask;
     }
 
@@ -642,8 +665,11 @@ internal static class Program
                 while (true)
                 {
                     await Task.Delay(60);
-                    if (File.Exists(Path.Combine(directory, "exit-track.txt")))
+                    var exitFile = Path.Combine(directory, "exit-track.txt");
+                    if (ReadOptionalFixtureText(exitFile) is { } finalState)
                     {
+                        WriteState(directory, finalState);
+                        File.Delete(exitFile);
                         Console.Error.WriteLine("fake listener disconnected");
                         return 7;
                     }

@@ -13,7 +13,6 @@ public sealed class MirrorManager : IAsyncDisposable
     private readonly object _notifications = new();
     private readonly Dictionary<string, DeviceSessions> _devices = new(StringComparer.Ordinal);
     private readonly HashSet<Session> _sessions = [];
-    private readonly List<CancellationTokenSource> _generations = [];
     private readonly CancellationTokenSource _shutdown = new();
     private readonly TaskCompletionSource _startsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _activeStarts;
@@ -35,13 +34,13 @@ public sealed class MirrorManager : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         cancellationToken.ThrowIfCancellationRequested();
         DeviceSessions device;
-        CancellationTokenSource generation;
+        DeviceConnection generation;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_devices.TryGetValue(serial, out device!) || device.Generation is null)
                 throw new InvalidOperationException("设备不在线，无法启动投屏。");
-            generation = device.Generation;
+            generation = device.Generation.Retain();
             device.ActiveStarts++;
             _activeStarts++;
         }
@@ -68,7 +67,7 @@ public sealed class MirrorManager : IAsyncDisposable
             }
 
             request.Token.ThrowIfCancellationRequested();
-            Notify(serial, "投屏启动中…", () => device.Generation == generation && !generation.IsCancellationRequested);
+            Notify(serial, "投屏启动中…", () => device.Generation == generation && !generation.Token.IsCancellationRequested);
             var process = ProcessRunner.Start(_scrcpyPath,
                 ["-s", serial, "--window-title", $"ADB Dock · {serial}"],
                 new Dictionary<string, string> { ["ADB"] = _adbPath });
@@ -99,15 +98,17 @@ public sealed class MirrorManager : IAsyncDisposable
                 await created.Finished.ConfigureAwait(false);
             }
             Notify(serial, $"投屏启动失败：{exception.Message}",
-                () => device.Generation == generation && !generation.IsCancellationRequested);
+                () => device.Generation == generation && !generation.Token.IsCancellationRequested);
             throw;
         }
         finally
         {
             if (acquired) device.Gate.Release();
+            generation.Release();
             lock (_sync)
             {
                 device.ActiveStarts--;
+                RemoveIdleDevice(serial, device);
                 if (--_activeStarts == 0 && _disposed) _startsDrained.TrySetResult();
             }
         }
@@ -118,8 +119,8 @@ public sealed class MirrorManager : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(serials);
         var online = serials.ToHashSet(StringComparer.Ordinal);
         if (online.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("设备序列号不能为空。", nameof(serials));
-        List<CancellationTokenSource> disconnected = [];
-        List<(string Serial, DeviceSessions Device)> pendingStarts = [];
+        List<DeviceConnection> disconnected = [];
+        List<string> pendingStarts = [];
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -131,22 +132,20 @@ public sealed class MirrorManager : IAsyncDisposable
                 if (device.Current is { } current)
                     current.SetStopReason("设备已断开，投屏会话已停止。");
                 else if (device.ActiveStarts > 0)
-                    pendingStarts.Add((serial, device));
+                    pendingStarts.Add(serial);
+                RemoveIdleDevice(serial, device);
             }
             foreach (var serial in online)
             {
                 if (!_devices.TryGetValue(serial, out var device))
                     _devices.Add(serial, device = new DeviceSessions());
-                if (device.Generation is null)
-                {
-                    device.Generation = new CancellationTokenSource();
-                    _generations.Add(device.Generation);
-                }
+                device.Generation ??= new DeviceConnection();
             }
         }
-        foreach (var source in disconnected) CancelSafely(source);
-        foreach (var (serial, device) in pendingStarts)
-            Notify(serial, "设备已断开，投屏启动已取消。", () => device.Generation is null);
+        foreach (var connection in disconnected) connection.Disconnect();
+        foreach (var serial in pendingStarts)
+            Notify(serial, "设备已断开，投屏启动已取消。", () =>
+                !_devices.TryGetValue(serial, out var current) || current.Generation is null);
     }
 
     private async Task ShowWhenReadyAsync(Session session, CancellationToken cancellationToken)
@@ -242,12 +241,21 @@ public sealed class MirrorManager : IAsyncDisposable
             stopRegistration.Dispose();
             session.Process.Dispose();
             session.Cancellation.Dispose();
+            session.Generation.Release();
             lock (_sync)
             {
                 if (session.Device.Current == session) session.Device.Current = null;
                 _sessions.Remove(session);
+                RemoveIdleDevice(session.Serial, session.Device);
             }
         }
+    }
+
+    private void RemoveIdleDevice(string serial, DeviceSessions device)
+    {
+        if (device.Generation is not null || device.ActiveStarts != 0 || device.Current is not null) return;
+        _devices.Remove(serial);
+        device.Gate.Dispose();
     }
 
     private static async Task ReadOutputAsync(StreamReader reader, Session session, CancellationToken cancellationToken)
@@ -312,8 +320,15 @@ public sealed class MirrorManager : IAsyncDisposable
             Task[] sessions;
             lock (_sync) sessions = _sessions.Select(session => session.Finished).ToArray();
             await Task.WhenAll(sessions).ConfigureAwait(false);
-            foreach (var source in _generations) source.Dispose();
-            foreach (var device in _devices.Values) device.Gate.Dispose();
+            lock (_sync)
+            {
+                foreach (var device in _devices.Values)
+                {
+                    device.Generation?.Release();
+                    device.Gate.Dispose();
+                }
+                _devices.Clear();
+            }
             _shutdown.Dispose();
             completion.TrySetResult();
         }
@@ -369,7 +384,7 @@ public sealed class MirrorManager : IAsyncDisposable
     private sealed class DeviceSessions
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
-        public CancellationTokenSource? Generation { get; set; }
+        public DeviceConnection? Generation { get; set; }
         public Session? Current { get; set; }
         public int ActiveStarts { get; set; }
     }
@@ -381,19 +396,19 @@ public sealed class MirrorManager : IAsyncDisposable
         private string? _stopReason;
         private volatile bool _rendererDetected;
 
-        public Session(string serial, DeviceSessions device, CancellationTokenSource generation,
+        public Session(string serial, DeviceSessions device, DeviceConnection generation,
             Process process, CancellationToken shutdown)
         {
             Serial = serial;
             Device = device;
-            Generation = generation;
             Process = process;
             Cancellation = CancellationTokenSource.CreateLinkedTokenSource(generation.Token, shutdown);
+            Generation = generation.Retain();
         }
 
         public string Serial { get; }
         public DeviceSessions Device { get; }
-        public CancellationTokenSource Generation { get; }
+        public DeviceConnection Generation { get; }
         public Process Process { get; }
         public CancellationTokenSource Cancellation { get; }
         public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

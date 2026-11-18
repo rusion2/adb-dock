@@ -77,6 +77,27 @@ function Assert-PayloadReleaseVersion {
     }
 }
 
+function Get-InstallerSourceInfo {
+    param($SourceState, [bool]$ChecksPassed, [Nullable[bool]]$NativeUiChecksPassed, [switch]$ExternalPayload)
+    $checkout = [ordered]@{
+        branch = $SourceState.Branch
+        commit = $SourceState.Commit
+        clean = $SourceState.Clean
+        checksPassed = $ChecksPassed
+        nativeUiChecksPassed = $NativeUiChecksPassed
+    }
+    # Checks run on the packaging checkout cannot attest to binaries copied in.
+    [ordered]@{
+        packagingCheckout = $checkout
+        payloadOrigin = $(if ($ExternalPayload) { 'external' } else { 'packaging-checkout' })
+        sourceBranch = $(if ($ExternalPayload) { $null } else { $checkout.branch })
+        sourceCommit = $(if ($ExternalPayload) { $null } else { $checkout.commit })
+        sourceClean = $(if ($ExternalPayload) { $null } else { $checkout.clean })
+        checksPassed = $(if ($ExternalPayload) { $null } else { $checkout.checksPassed })
+        nativeUiChecksPassed = $(if ($ExternalPayload) { $null } else { $checkout.nativeUiChecksPassed })
+    }
+}
+
 function Assert-StableReleaseSource {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,

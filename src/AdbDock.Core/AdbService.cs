@@ -28,6 +28,7 @@ public sealed class AdbService : IAsyncDisposable
 
     public string ExecutablePath { get; }
     public event Action<DeviceSnapshot>? SnapshotChanged;
+    public event Action<string?>? ListenerWarningChanged;
 
     public AdbService(string executablePath)
     {
@@ -152,6 +153,7 @@ public sealed class AdbService : IAsyncDisposable
                 output = ReadNotificationsAsync(process.StandardOutput, session.Token);
                 error = ReadErrorTailAsync(process.StandardError, session.Token);
                 await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                _refreshRequests.Writer.TryWrite(0);
                 // A descendant retaining inherited pipe handles must not prevent listener recovery.
                 try { await Task.WhenAll(output, error).WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false); }
                 catch (TimeoutException) { session.Cancel(); }
@@ -161,7 +163,11 @@ public sealed class AdbService : IAsyncDisposable
                     : $"ADB 设备监听已中断，正在恢复：{failure}";
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
-            catch (Exception exception) { failure = $"ADB 设备监听不可用，正在恢复：{exception.Message}"; }
+            catch (Exception exception)
+            {
+                _refreshRequests.Writer.TryWrite(0);
+                failure = $"ADB 设备监听不可用，正在恢复：{exception.Message}";
+            }
             finally
             {
                 session.Cancel();
@@ -173,10 +179,10 @@ public sealed class AdbService : IAsyncDisposable
                 }
             }
 
-            PublishFailure(failure);
+            if (cancellationToken.IsCancellationRequested) break;
+            Notify(ListenerWarningChanged, failure);
             if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(10)) retry = TimeSpan.FromSeconds(1);
             await Task.Delay(retry, cancellationToken).ConfigureAwait(false);
-            _refreshRequests.Writer.TryWrite(0);
             retry = TimeSpan.FromSeconds(Math.Min(retry.TotalSeconds * 2, 8));
         }
     }
@@ -184,11 +190,17 @@ public sealed class AdbService : IAsyncDisposable
     private async Task ReadNotificationsAsync(StreamReader reader, CancellationToken cancellationToken)
     {
         var buffer = new char[4096];
+        var firstBlock = true;
         while (await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false) != 0)
         {
             // CLI versions differ in framing (hex length, blank lines, or headers). Any stdout block
             // invalidates the list; only devices -l is ever used as the authoritative snapshot.
             _refreshRequests.Writer.TryWrite(0);
+            if (firstBlock)
+            {
+                firstBlock = false;
+                Notify(ListenerWarningChanged, null);
+            }
         }
     }
 
@@ -221,12 +233,17 @@ public sealed class AdbService : IAsyncDisposable
                 _lastSnapshot = snapshot;
                 handlers = SnapshotChanged;
             }
-            if (handlers is null) return;
-            foreach (Action<DeviceSnapshot> handler in handlers.GetInvocationList())
-            {
-                try { handler(snapshot); }
-                catch { /* A view subscriber must not stop discovery or turn it into an ADB error. */ }
-            }
+            Notify(handlers, snapshot);
+        }
+    }
+
+    private static void Notify<T>(Action<T>? handlers, T value)
+    {
+        if (handlers is null) return;
+        foreach (Action<T> handler in handlers.GetInvocationList())
+        {
+            try { handler(value); }
+            catch { /* A view subscriber must not stop discovery or turn it into an ADB error. */ }
         }
     }
 

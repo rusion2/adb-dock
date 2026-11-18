@@ -8,7 +8,9 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.2/AdbDock-0.1.3-beta.2-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.2 pre-release installer (Windows x64)</strong></a></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.3/AdbDock-0.1.3-beta.3-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.3 pre-release installer (Windows x64)</strong></a></p>
+
+<p align="center">Device connections require ADB. scrcpy is optional for mirroring. Download each tool separately.<br><a href="https://developer.android.com/tools/releases/platform-tools">Official Android SDK Platform-Tools (includes ADB)</a> · <a href="https://github.com/Genymobile/scrcpy">Official scrcpy</a></p>
 
 <p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code></p>
 
@@ -18,7 +20,7 @@
 
 ADB Dock is a local Windows companion for Android devices. Check connection status, choose a device, then mirror its screen, save a screenshot, install an APK, send a basic key event, or inspect logs. It switches between a device panel and a compact edge tab, with no account or backend service required.
 
-**New in `v0.1.3-beta.2`** — the installer can now close a running copy of ADB Dock during an upgrade, even when it is in the system tray. [Upgrade instructions](#upgrade)
+**`v0.1.3-beta.3`** adds first-time connection guidance. The edge tab opens a compact action panel with device aliases and one-click screenshots. Logcat continues to collect logs while the display is paused. [Upgrade instructions](#upgrade)
 
 Earlier `0.1.x` packages are test builds, including those without a beta suffix. Each future stable release will have its own `release/vX.Y.Z` branch and matching `vX.Y.Z` tag. [Versioning policy](VERSIONING.md)
 
@@ -47,6 +49,7 @@ These are native WPF windows with fixture devices, logs, and metrics. The applic
 </p>
 
 <p align="center">
+  <img src="docs/images/first-launch.png" width="266" alt="First-launch guide for configuring ADB">
   <img src="docs/images/docked-bar.png" width="266" alt="Top edge tab with a click-to-expand button">
 </p>
 
@@ -69,13 +72,11 @@ On a first installation, “Start ADB Dock when I sign in to Windows” is selec
 
 ### Configure ADB and scrcpy
 
-These tools are not bundled:
+1. Extract the full Windows Android SDK Platform-Tools archive. For mirroring, also extract the full Windows scrcpy archive.
+2. Open **Settings** in the upper-right corner and select `adb.exe` from the extracted folder. Select `scrcpy.exe` if you want mirroring. You can also add the tool folders to `PATH` and leave the corresponding fields blank.
+3. Click **检测工具** (Detect tools) to see separate results for ADB and scrcpy. A working ADB is enough to connect devices, and you can leave the scrcpy path blank. Click **保存** (Save) to apply the paths and refresh the device list.
 
-1. Obtain the official [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools).
-2. For mirroring, obtain a complete official [scrcpy](https://github.com/Genymobile/scrcpy) distribution.
-3. Open Settings in the upper-right corner, choose `adb.exe` / `scrcpy.exe`, and click the tool-detection button. You can also add their directories to `PATH`.
-
-Lookup order: **configured path → system PATH → tools beside the application**. An invalid configured path produces an error instead of silently selecting another version. Missing scrcpy affects mirroring only.
+ADB Dock checks the configured path first, then the system `PATH`, and finally the `tools/` directory beside the application. If a configured path is invalid, correct or clear it in Settings.
 
 <details>
 <summary>Place tools beside the application</summary>
@@ -99,9 +100,11 @@ Keep each distribution complete rather than copying only its executable.
 
 ### Connect a device
 
-Enable USB debugging in Android Developer options, connect a data-capable USB cable, and authorize the computer on the phone. Click an online device to open its actions. Unauthorized and offline devices show connection guidance instead. Existing ADB network connections also appear; there is currently no wireless-pairing wizard.
+1. Unlock your Android device and enable **USB debugging** in **Developer options**.
+2. Connect it to your PC with a USB data cable. When the phone asks **Allow USB debugging?**, confirm that it is your computer and tap **Allow**.
+3. The device list refreshes automatically. Once your device shows **在线** (Online), click it to open its actions. If it shows **未授权** (Unauthorized), check the phone for the prompt. If it shows **离线** (Offline), click it for connection guidance.
 
-APK installation and key events act on the selected device. Check its serial number before proceeding.
+Devices already connected over the network through ADB also appear in the list. APK installation and key events act on the selected device. Check its serial number before proceeding.
 
 <a id="usage"></a>
 ## Usage
@@ -109,14 +112,16 @@ APK installation and key events act on the selected device. Check its serial num
 ### Desktop controls
 
 - Click **展开** (Expand) at the end of the edge tab to open the full device list.
-- Click a device icon on the tab, or swipe left from the icon, to open its **preview**. It appears to the left when space permits, with the tab still visible. Move the pointer between the two to keep the preview open. It closes **5 seconds** after you leave both. Using its device selector, a menu, or a dialog pauses the countdown.
-- **Switch devices** using the name and serial number at the top of either window. The full action panel lists online devices. The preview has its own selector for all discovered devices, including offline or unauthorized devices that need attention. New actions use the serial number selected in that window. Operations already in progress keep their original target.
+- Click a device icon on the tab, or swipe left from the icon, to open its action panel. Offline or unauthorized devices open connection guidance.
+- **Switch devices** with the selector beside the **设备操作** (Device actions) heading. The closed selector shows the current device name. Hover to see its full name, serial number, and status. The list shows all three for each online device and supports keyboard selection. Operations already in progress keep their original target.
+- Click **备注** (Alias) on the action panel or use the device list context menu to save a local device alias. Its first character appears on the edge tab.
+- Click the camera in the device list to save a PNG directly to the configured folder. **打开图片** (Open image) opens the latest one. **截图另存** (Save screenshot as) on the action panel lets you pick a path and filename.
 - Use the title-bar **显示浮窗** (Show floating tab) switch to choose where the close button sends the panel. With the switch on, closing the panel returns it to the edge tab. With the switch off, closing hides it in the tray. Double-click the tray icon to reopen the panel.
-- **Automatic collapse** applies to the full panel when the floating tab is enabled. The default is **2 seconds**. In Settings you can turn it off or choose **1–300 seconds**, then click Save. The countdown starts when the pointer leaves both the panel and the tab’s original location. Returning to either cancels it. Dragging and interacting with a menu, dialog, or file picker pause it.
+- **Automatic collapse** starts after ADB Dock first sees an online device. The app remembers this across restarts and continues to use your settings after devices disconnect. When both the floating tab and automatic collapse are enabled, the countdown begins when the pointer leaves the panel and the tab’s original location. The default is **2 seconds**. In Settings you can turn it off or choose **1–300 seconds**, then click **保存** (Save). Returning to the panel or tab position cancels the countdown. Dragging and interacting with a menu, dialog, or file picker pause it.
 - **Move the edge tab** by dragging the ADB/device-count area. Movement begins as soon as the pointer crosses the Windows drag threshold. Releasing in place keeps the tab compact. With keyboard focus on that area, use the arrow keys to choose a screen edge. To dock the full panel manually, enable the floating tab, drag the title bar toward any screen edge, and release.
 - **结果** (Results) holds the latest 20 operation results for this session. Use it to copy or export results, or open the most recent screenshot. To quit the application, choose **退出 ADB Dock** from the tray or context menu. The Settings footer shows the running version.
 
-The native app saves these preferences locally. In the browser prototype, they last until you reload the page.
+The native app saves preferences locally. The prototype stores device aliases in the current browser.
 
 ### Log filtering
 
@@ -128,7 +133,7 @@ error|fatal
 
 Matching is case-sensitive by default. Use `(?i)error|fatal` to ignore case. Clearing the expression restores all currently retained lines. Invalid expressions keep the last valid filter; expensive expressions suspend filtering and display a message asking you to change the pattern.
 
-The cache retains up to **20,000 lines**, bounded by approximately **32 MiB of raw text**, with at most 8,000 characters per line. Copy and export use the currently displayed text. **Pausing display discards incoming lines** while preserving the existing cache; this is not a continuous log recorder.
+The cache retains up to **20,000 lines**, bounded by approximately **32 MiB of raw text**, with at most 8,000 characters per line. Copy and export use the currently displayed text. **Pause display** holds your reading position while incoming lines continue to enter the cache. **Jump to latest** shows the matching lines still retained.
 
 ### Performance monitoring
 
@@ -184,7 +189,7 @@ Startup checks use temporary registry keys and do not change the real startup en
 
 </details>
 
-**`v0.1.3-beta.2` passed 34 core checks, 25 native WPF checks, and 11 isolated installer checks.** Upgrade verification covered a running `0.1.2` client and a `0.1.3-beta.1` client hidden in the tray. Installer checks also confirmed that an unresponsive client stops the upgrade before any application files are replaced. [Development record](开发进度.md)
+`v0.1.3-beta.3` automated checks cover first-time connection, ADB listener recovery, screenshot validation, pausing Logcat, and isolated install, upgrade, and uninstall flows. See the test scope for physical devices and multi-monitor DPI. [Development record](开发进度.md)
 
 <a id="packaging"></a>
 ## Packaging
@@ -217,7 +222,7 @@ The first build needs network access to restore runtime packages. The installer 
 ## Troubleshooting
 
 - **ADB unavailable**: verify the configured path, run tool detection, and check that companion DLLs are present.
-- **Unauthorized or offline device**: unlock the phone, confirm USB debugging authorization, check the cable, then refresh.
+- **Unauthorized or offline device**: unlock the phone, confirm USB debugging authorization, and check that your USB cable supports data transfer. The device status refreshes automatically.
 - **Mirroring fails**: check the complete scrcpy distribution and its path. A mirroring failure does not change the ADB online count.
 - **Portable app will not start**: install the .NET 10 **Desktop Runtime**, or use a self-contained package.
 - **Build fails in a restricted environment**: set `$env:MSBuildEnableWorkloadResolver = 'false'` in the current PowerShell session. To isolate CLI settings, also set `$env:DOTNET_CLI_HOME = Join-Path $PWD '.build\dotnet-home'`.

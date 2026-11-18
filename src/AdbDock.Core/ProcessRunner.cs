@@ -79,8 +79,12 @@ public static class ProcessRunner
         }
     }
 
-    public static async Task RunBinaryToFileAsync(string executable, IEnumerable<string> arguments,
-        string destination, TimeSpan timeout, CancellationToken cancellationToken = default)
+    public static Task RunBinaryToFileAsync(string executable, IEnumerable<string> arguments,
+        string destination, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        RunBinaryToFileAsync(executable, arguments, destination, timeout, cancellationToken, validate: null);
+
+    internal static async Task RunBinaryToFileAsync(string executable, IEnumerable<string> arguments,
+        string destination, TimeSpan timeout, CancellationToken cancellationToken, Action<Stream, CancellationToken>? validate)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         ValidateTimeout(timeout);
@@ -94,7 +98,7 @@ public static class ProcessRunner
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
         try
         {
-            await using var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+            await using var file = new FileStream(temporary, FileMode.CreateNew, validate is null ? FileAccess.Write : FileAccess.ReadWrite,
                 FileShare.None, 81920, FileOptions.Asynchronous);
             using var process = Start(executable, arguments);
             var output = process.StandardOutput.BaseStream.CopyToAsync(file, operation.Token);
@@ -106,6 +110,11 @@ public static class ProcessRunner
                 new ProcessResult(process.ExitCode, "", await error.ConfigureAwait(false)).EnsureSuccess();
                 if (file.Length == 0) throw new InvalidDataException("程序未返回任何二进制数据，文件未保存。");
                 await file.FlushAsync(operation.Token).ConfigureAwait(false);
+                if (validate is not null)
+                {
+                    file.Position = 0;
+                    validate(file, operation.Token);
+                }
                 await file.DisposeAsync().ConfigureAwait(false);
                 operation.Token.ThrowIfCancellationRequested();
                 File.Move(temporary, fullDestination, overwrite: true);

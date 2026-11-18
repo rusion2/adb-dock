@@ -64,6 +64,7 @@ public static partial class OperationsChecks
         (string Name, Func<FakeTool, string, Task> Run)[] checks =
         [
             ("AdbOperations/MirrorManager: initial and explicit offline rejection", OfflineAsync),
+            ("AdbOperations/MirrorManager: reconnects retire generations and idle serial queues", ReconnectResourcesAsync),
             ("AdbOperations: install exit code and Success/Failure text", InstallAsync),
             ("AdbOperations: APK type and missing-file validation", ApkValidationAsync),
             ("AdbOperations: key whitelist and exact directed arguments", KeysAsync),
@@ -100,6 +101,35 @@ public static partial class OperationsChecks
         finally
         {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task ReconnectResourcesAsync(FakeTool fake, string directory)
+    {
+        await using var operations = new AdbOperations(fake.Executable);
+        await using var mirrors = new MirrorManager(fake.Executable, fake.Executable);
+        CheckReconnects(operations, operations.UpdateOnlineDevices);
+        CheckReconnects(mirrors, mirrors.UpdateOnlineDevices);
+
+        static void CheckReconnects(object service, Action<string[]> update)
+        {
+            // Keep the OS handle for each disconnected generation. A CTS releases
+            // that handle on disposal, even if the test still holds the WaitHandle.
+            var devices = (System.Collections.IDictionary)service.GetType()
+                .GetField("_devices", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+            for (var i = 0; i < 64; i++)
+            {
+                update(["stable", "reconnected", $"transient-{i}"]);
+                var device = devices["reconnected"]!;
+                var connection = device.GetType().GetProperty("Generation")!.GetValue(device)!;
+                var token = (CancellationToken)connection.GetType().GetProperty("Token")!.GetValue(connection)!;
+                var handle = token.WaitHandle.SafeWaitHandle;
+                update(["stable"]);
+                Check(handle.IsClosed, "Idle disconnected generation must release its token source.");
+                Check(devices.Count == 1 && devices.Contains("stable"), "Only the still-online device should retain its idle queue.");
+            }
+            update([]);
+            Check(devices.Count == 0, "Last disconnect must release all idle device queues.");
         }
     }
 
@@ -212,14 +242,41 @@ public static partial class OperationsChecks
         await using var operations = new AdbOperations(fake.Executable);
         operations.UpdateOnlineDevices(["screenshot"]);
         var destination = Path.Combine(directory, "截图 二进制.png");
-        byte[] bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 254, 128, 13, 10, 0, 42];
-        var task = operations.ScreenshotAsync("screenshot", destination);
-        var peer = await fake.NextAsync();
-        EqualArguments(peer, "-s", "screenshot", "exec-out", "screencap", "-p");
-        await peer.SendAsync(binary: bytes, exitCode: 0);
-        await task.WaitAsync(Deadline);
-        Check((await File.ReadAllBytesAsync(destination)).SequenceEqual(bytes), "Capture bytes must never pass through a text decoder.");
-        Check(Directory.GetFiles(directory).Length == 1, "Successful screenshot leaves no temporary file.");
+        // Two independent fixtures: split-IDAT RGBA and an Adam7 indexed image.
+        var rgba = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP4TRdsqgAAAA1JREFUz8vF8K+BQQsADjoCvxUYwlsAAAAASUVORK5CYII=");
+        var adam7 = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAkAAAAJAQMAAAGtWKTFAAAABlBMVEUAAAD///+l2Z/dAAAABElEQVR4nGNgs8N33AAAAAhJREFUIBYAAAAqAAFR7WWFAAAAAElFTkSuQmCC");
+        async Task CaptureAsync(byte[] data)
+        {
+            var task = operations.ScreenshotAsync("screenshot", destination);
+            var peer = await fake.NextAsync();
+            EqualArguments(peer, "-s", "screenshot", "exec-out", "screencap", "-p");
+            await peer.SendAsync(binary: data, exitCode: 0);
+            await task.WaitAsync(Deadline);
+        }
+        foreach (var valid in new[] { rgba, adam7 })
+        {
+            await CaptureAsync(valid);
+            Check((await File.ReadAllBytesAsync(destination)).SequenceEqual(valid), "Successful capture preserves the original PNG bytes.");
+        }
+        var badCrc = rgba.ToArray();
+        badCrc[29] ^= 1; // First byte of the IHDR CRC.
+        (string Scenario, byte[] Bytes)[] invalid =
+        [
+            ("signature only", rgba[..16]),
+            ("truncated IEND", rgba[..^3]),
+            ("bad chunk CRC", badCrc),
+            // The following samples have valid chunk CRCs.
+            ("bad zlib checksum", Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP4TRdsqgAAAA1JREFUz8vF8K+BQQsADjoCvmIf8s0AAAAASUVORK5CYII=")),
+            ("truncated zlib", Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP4TRdsqgAAAApJREFUz8vF8K+BQQsADmlWo+YAAAAASUVORK5CYII=")),
+            ("short scanline", Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP4TRdsqgAAAAxJREFUz8vF8K+BAQALewKVScLOHwAAAABJRU5ErkJggg==")),
+            ("invalid filter", Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP/03P5CQAAAA1JREFUz8vF8K+BQQsADnkCxk4dOFoAAAAASUVORK5CYII="))
+        ];
+        foreach (var (scenario, data) in invalid)
+        {
+            await ExpectAsync<InvalidDataException>(() => CaptureAsync(data));
+            Check((await File.ReadAllBytesAsync(destination)).SequenceEqual(adam7), $"Invalid capture ({scenario}) preserves the last good image.");
+            Check(Directory.GetFiles(directory).Length == 1, $"Invalid capture ({scenario}) removes the temporary file.");
+        }
     }
 
     private static async Task DisconnectAsync(FakeTool fake, string directory)

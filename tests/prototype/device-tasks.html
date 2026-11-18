@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>ADB Dock prototype device task regression</title>
+<!-- Serve the repository root over localhost so the test and prototype share an origin. -->
+<pre id="result">Running…</pre>
+<iframe id="prototype" title="ADB Dock prototype" src="../../index.html" width="1000" height="700"></iframe>
+<script>
+  const result = document.getElementById("result");
+  const prototype = document.getElementById("prototype");
+  prototype.addEventListener("load", async () => {
+    try {
+      const doc = prototype.contentDocument;
+      const find = (selector) => doc.querySelector(selector);
+      const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+      const check = (condition, message) => { if (!condition) throw new Error(message); };
+      function selectDevice(id) {
+        const select = find("#operation-device-select");
+        select.value = id;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      function install() {
+        const input = find("#apk-input");
+        input.addEventListener("click", event => event.preventDefault(), { once: true });
+        find('[data-action="install"]').click();
+        const files = new DataTransfer();
+        files.items.add(new File(["fixture"], "fixture.apk"));
+        input.files = files.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      const screenshot = () => find('[data-action="screenshot"]');
+
+      find('[data-device="pixel"]').click();
+      install();
+      check(screenshot().disabled, "Pixel should be busy during installation");
+      selectDevice("xiaomi");
+      check(!screenshot().disabled, "An installation on Pixel blocked Xiaomi");
+      screenshot().click();
+      check(screenshot().disabled, "Xiaomi should be busy taking a screenshot");
+      await wait(1050);
+      check(!screenshot().disabled, "Xiaomi should be free after its screenshot");
+      selectDevice("pixel");
+      check(screenshot().disabled, "Completing Xiaomi's screenshot cleared Pixel's install");
+      await wait(650);
+      check(!screenshot().disabled, "Pixel should be free after installation");
+
+      screenshot().click();
+      find('[data-scenario="healthy"]').click();
+      find('[data-device="pixel"]').click();
+      install();
+      await wait(1050);
+      check(screenshot().disabled, "A canceled screenshot cleared Pixel's new install");
+      await wait(650);
+      check(!screenshot().disabled, "Pixel's new install did not finish");
+      result.textContent = "PASS";
+    } catch (error) {
+      result.textContent = "FAIL " + error.message;
+    }
+  });
+</script>
+</html>

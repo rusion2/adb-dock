@@ -39,6 +39,7 @@ $artifactRoot = Join-Path $projectRoot 'artifacts'
 $stagingDirectory = Join-Path $projectRoot ('.build\installer\' + $releaseName)
 $payload = Join-Path $stagingDirectory 'payload'
 $manifest = Join-Path $stagingDirectory 'payload-files.nsh'
+$inventory = Join-Path $stagingDirectory 'payload-inventory.txt'
 $outputFile = Join-Path $artifactRoot ($releaseName + '.exe')
 $infoFile = Join-Path $artifactRoot ($releaseName + '.installer-info.json')
 $checkHost = Join-Path $projectRoot 'tests\AdbDock.Checks\bin\Release\net10.0\AdbDock.Checks.exe'
@@ -270,6 +271,10 @@ try {
     }
     $manifestLines.Add('!macroend')
     [IO.File]::WriteAllLines($manifest, $manifestLines, (New-Object Text.UTF8Encoding($true)))
+    $inventoryEntries = foreach ($entry in $entries) {
+        if ($entry.IsDirectory) { $entry.Relative + '\' } else { $entry.Relative }
+    }
+    [IO.File]::WriteAllLines($inventory, [string[]]$inventoryEntries, [Text.Encoding]::UTF8)
 
     if ($NsisCompilerPath) {
         $compiler = (Resolve-Path -LiteralPath $NsisCompilerPath).ProviderPath
@@ -301,6 +306,7 @@ try {
         ('/DPAYLOAD_DIR=' + (ConvertTo-NsisString -Value $payload)),
         ('/DOUTPUT_FILE=' + (ConvertTo-NsisString -Value $outputFile)),
         ('/DFILE_MANIFEST=' + (ConvertTo-NsisString -Value $manifest)),
+        ('/DPAYLOAD_INVENTORY=' + (ConvertTo-NsisString -Value $inventory)),
         $installerSource
     )
     if ($releaseVersion.IsStable) {
@@ -310,14 +316,12 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $outputFile -PathType Leaf)) { throw 'NSIS compilation failed. Staging files have been retained.' }
     $hash = (Get-FileHash -LiteralPath $outputFile -Algorithm SHA256).Hash.ToLowerInvariant()
     ('{0}  {1}' -f $hash, [IO.Path]::GetFileName($outputFile)) | Set-Content -LiteralPath ($outputFile + '.sha256') -Encoding ASCII
-    [ordered]@{
+    $info = [ordered]@{
         application = 'ADB Dock'
         version = $version
         fileVersion = $releaseVersion.FileVersion
         releaseChannel = $releaseVersion.Channel
-        sourceBranch = $sourceState.Branch
-        sourceCommit = $sourceState.Commit
-        sourceClean = $sourceState.Clean
+        payloadProductVersion = (Get-Item -LiteralPath (Join-Path $payload 'AdbDock.dll')).VersionInfo.ProductVersion
         retainedReleaseBranch = $releaseVersion.ReleaseBranch
         installer = [IO.Path]::GetFileName($outputFile)
         installerSha256 = $hash
@@ -328,8 +332,6 @@ try {
         loginAutoStartDefaultEnabled = $true
         autoStartRegistryValue = 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AdbDock'
         crashRestartEnabled = $false
-        checksPassed = -not [bool]$SkipChecks
-        nativeUiChecksPassed = $nativeUiChecksPassed
         publishedSmokePassed = $publishedSmokePassed
         installerLifecycleTested = $false
         toolsBundled = $false
@@ -340,7 +342,9 @@ try {
         officialCompilerArchiveSha256 = $nsisSha256
         payloadFileCount = @($entries | Where-Object { -not $_.IsDirectory }).Count
         builtAt = [DateTimeOffset]::Now.ToString('O')
-    } | ConvertTo-Json | Set-Content -LiteralPath $infoFile -Encoding UTF8
+    }
+    $info += Get-InstallerSourceInfo -SourceState $sourceState -ChecksPassed (!$SkipChecks) -NativeUiChecksPassed $nativeUiChecksPassed -ExternalPayload:([bool]$PayloadDirectory)
+    $info | ConvertTo-Json | Set-Content -LiteralPath $infoFile -Encoding UTF8
     Write-Host "Installer: $outputFile"
     Write-Host "SHA256: $outputFile.sha256"
     Write-Host "Installer information: $infoFile"

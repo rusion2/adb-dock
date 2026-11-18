@@ -6,7 +6,7 @@
         <Grid.RowDefinitions><RowDefinition Height="68"/><RowDefinition Height="*"/><RowDefinition Height="38"/></Grid.RowDefinitions>
         <Border x:Name="TitleBar" Background="#FBFAFF" CornerRadius="18,18,0,0" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" MouseLeftButtonDown="TitleMouseDown">
           <Grid Margin="18,0,12,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel VerticalAlignment="Center"><TextBlock FontSize="18" FontWeight="SemiBold"><Run Text="ADB" Foreground="{StaticResource Accent}"/><Run Text=" Dock"/></TextBlock><TextBlock Text="{Binding Caption}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/></StackPanel>
+            <StackPanel VerticalAlignment="Center"><TextBlock FontSize="18" FontWeight="SemiBold"><Run Text="ADB" Foreground="{StaticResource Accent}"/><Run Text=" Dock"/></TextBlock><TextBlock Text="{Binding Caption}" ToolTip="{Binding ListenerWarning}" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <ToggleButton x:Name="FloatButton" Style="{StaticResource HeaderIconButton}" Checked="FloatingTabChanged" Unchecked="FloatingTabChanged" AutomationProperties.AutomationId="FloatButton" AutomationProperties.Name="显示浮窗">
                 <Viewbox Width="16" Height="16" IsHitTestVisible="False"><Grid Width="24" Height="24">
@@ -19,7 +19,7 @@
             </StackPanel>
           </Grid>
         </Border>
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16,16,16,8">
+        <ScrollViewer x:Name="ContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16,12,16,8">
           <Grid>
             <StackPanel x:Name="ListPanel">
               <Border Background="#F6F4FE" CornerRadius="12" Padding="16,13" Margin="0,0,0,18"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -28,36 +28,74 @@
               </Grid></Border>
               <TextBlock x:Name="ListLabel" Text="已发现的设备                         点击设备，开始操作" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,0,10"/>
               <ItemsControl x:Name="DeviceList" ItemsSource="{Binding Devices}" AutomationProperties.AutomationId="DeviceList"><ItemsControl.ItemTemplate><DataTemplate>
-                <Button HorizontalContentAlignment="Stretch" Margin="0,0,0,9" Padding="12" Background="White" Click="DeviceClick" ToolTip="{Binding Tooltip}" AutomationProperties.Name="{Binding Tooltip}">
-                  <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Button HorizontalContentAlignment="Stretch" Margin="0,0,0,9" Padding="12" Background="White" Click="DeviceClick" ToolTip="{Binding Tooltip}" AutomationProperties.Name="{Binding Tooltip}" AutomationProperties.HelpText="{Binding AuthorizationHint}" AutomationProperties.AutomationId="DeviceRowButton">
+                  <Button.ContextMenu>
+                    <ContextMenu Opened="ContextMenuOpened" Closed="ContextMenuClosed">
+                      <MenuItem Header="编辑备注" Click="EditAliasClick" CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType={x:Type ContextMenu}}}"/>
+                    </ContextMenu>
+                  </Button.ContextMenu>
+                  <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="40"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <Border Width="34" Height="40" Background="{Binding Tint}" CornerRadius="9" VerticalAlignment="Center"><Grid><Rectangle Width="13" Height="23" RadiusX="3" RadiusY="3" Stroke="{Binding Tone}" StrokeThickness="1.5"/><TextBlock Text="{Binding Marker}" Foreground="{Binding Tone}" FontSize="10" Background="{Binding Tint}" HorizontalAlignment="Right" VerticalAlignment="Bottom"/></Grid></Border>
                     <StackPanel Grid.Column="1" Margin="11,0,5,0"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/><TextBlock Text="{Binding Serial}" FontFamily="Consolas" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/><TextBlock Text="{Binding Connection}" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/></StackPanel>
-                    <StackPanel Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="{Binding Status}" Foreground="{Binding Tone}" FontSize="11" HorizontalAlignment="Center"/><Button Content="▧" IsEnabled="{Binding IsOnline}" Click="QuickScreenshotClick" Width="32" Height="32" Padding="0" Margin="3,4,0,0" ToolTip="保存此设备截图" AutomationProperties.Name="保存此设备截图"/></StackPanel>
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Status}" Foreground="{Binding Tone}" FontSize="11" HorizontalAlignment="Center"/>
+                      <Button IsEnabled="{Binding IsOnline}" Click="QuickScreenshotClick" Width="32" Height="32" Padding="0" Margin="3,4,0,0" ToolTip="直接保存到截图目录" AutomationProperties.Name="保存此设备截图">
+                        <Viewbox Width="17" Height="17"><Path Data="{StaticResource CameraGlyphGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox>
+                      </Button>
+                    </StackPanel>
+                    <Border Grid.Row="1" Grid.ColumnSpan="3" Margin="0,8,0,0" Padding="8,6" CornerRadius="6" Background="#FCF5E4"
+                            Visibility="{Binding NeedsAuthorization, Converter={StaticResource BoolVisibility}}">
+                      <TextBlock Text="{Binding AuthorizationHint}" FontSize="11" AutomationProperties.AutomationId="AuthorizationHint"/>
+                    </Border>
                   </Grid>
                 </Button>
               </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-              <StackPanel x:Name="EmptyPanel" Margin="10,15,10,0"><TextBlock Text="▯" FontSize="55" Foreground="#BBB2E4" HorizontalAlignment="Center"/><TextBlock Text="{Binding EmptyTitle}" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,8"/><TextBlock Text="{Binding EmptyMessage}" Foreground="{StaticResource Muted}" TextAlignment="Center" MaxHeight="94"/><Button Content="连接指引 / 路径设置" Click="EmptyHelpClick" Margin="20,18,20,0" AutomationProperties.AutomationId="EmptyHelpButton"/></StackPanel>
+              <Border x:Name="EmptyPanel" Padding="16" BorderThickness="1" BorderBrush="{StaticResource Line}" CornerRadius="12">
+                <StackPanel>
+                  <TextBlock Text="{Binding EmptyTitle}" FontSize="18" FontWeight="SemiBold" AutomationProperties.AutomationId="ConnectionGuideTitle"/>
+                  <TextBlock Text="{Binding EmptyMessage}" Margin="0,8,0,0" MaxHeight="128" ToolTip="{Binding EmptyMessage}"/>
+                  <Button Content="{Binding EmptyAction}" Visibility="{Binding ShowEmptyAction, Converter={StaticResource BoolVisibility}}"
+                          Click="EmptyHelpClick" Background="{StaticResource Accent}" Foreground="White" HorizontalAlignment="Left"
+                          Margin="0,14,0,0" AutomationProperties.AutomationId="EmptyHelpButton"/>
+                </StackPanel>
+              </Border>
             </StackPanel>
             <StackPanel x:Name="DetailPanel" Visibility="Collapsed">
-              <DockPanel Margin="0,0,0,14"><Button Content="‹" Style="{StaticResource IconButton}" Click="BackClick" AutomationProperties.AutomationId="BackButton" AutomationProperties.Name="返回设备列表"/><TextBlock Text="设备操作" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0"/></DockPanel>
-              <Border CornerRadius="12" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="14"><StackPanel>
-                <TextBlock Text="当前设备" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,4"/>
-                <local:DevicePicker x:Name="DeviceSwitcher" AutomationProperties.AutomationId="DeviceSwitcher" AutomationProperties.Name="切换操作设备"/>
-                <TextBlock Text="{Binding Selected.Connection}" Foreground="{StaticResource Muted}" Margin="0,5,0,8"/><DockPanel><Button DockPanel.Dock="Right" Content="复制" Click="CopySerialClick" Padding="8,3"/><TextBlock Text="{Binding Selected.Serial}" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" AutomationProperties.AutomationId="SelectedSerial"/></DockPanel></StackPanel></Border>
-              <TextBlock Text="常用操作" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,18,0,7"/>
+              <DockPanel Margin="0,0,0,8">
+                <Button Content="‹" Style="{StaticResource IconButton}" Click="BackClick" AutomationProperties.AutomationId="BackButton" AutomationProperties.Name="返回设备列表"/>
+                <TextBlock x:Name="DeviceActionsHeading" Text="设备操作" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="NoWrap" Margin="3,0,10,0"/>
+                <local:DevicePicker x:Name="DeviceSwitcher" MinWidth="0" MinHeight="30" AutomationProperties.AutomationId="DeviceSwitcher" AutomationProperties.Name="切换操作设备"/>
+              </DockPanel>
+              <Border CornerRadius="9" Background="#F7F6FC" Padding="8,2" Margin="0,0,0,8">
+                <DockPanel>
+                  <Button x:Name="AliasButton" DockPanel.Dock="Right" Content="备注" Click="EditAliasClick" Padding="8,2" MinHeight="28" AutomationProperties.AutomationId="DeviceAliasButton"/>
+                  <Button DockPanel.Dock="Right" Content="复制" Click="CopySerialClick" ToolTip="复制设备序列号" Padding="8,2" MinHeight="28" Margin="4,0" AutomationProperties.Name="复制设备序列号"/>
+                  <TextBlock DockPanel.Dock="Right" Text="{Binding Selected.Connection}" Foreground="{StaticResource Muted}" FontSize="10" VerticalAlignment="Center" Margin="4,0" TextWrapping="NoWrap"/>
+                  <TextBlock Text="{Binding Selected.Serial}" ToolTip="{Binding Selected.Serial}" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" AutomationProperties.AutomationId="SelectedSerial"/>
+                </DockPanel>
+              </Border>
               <UniformGrid x:Name="Actions" Columns="3" Margin="-4,0,-4,0">
-                <Button Style="{StaticResource ActionButton}" Tag="mirror" Click="ActionClick" Background="#F1EEFF" AutomationProperties.AutomationId="MirrorButton"><StackPanel><TextBlock Text="▣" FontSize="24" Foreground="{StaticResource Accent}" HorizontalAlignment="Center"/><TextBlock Text="设备投屏" Margin="0,7,0,0"/></StackPanel></Button>
-                <Button Style="{StaticResource ActionButton}" Tag="screenshot" Click="ActionClick" AutomationProperties.AutomationId="ScreenshotButton"><StackPanel><TextBlock Text="▧" FontSize="24" HorizontalAlignment="Center"/><TextBlock Text="截图保存" Margin="0,7,0,0"/></StackPanel></Button>
-                <Button Style="{StaticResource ActionButton}" Tag="install" Click="ActionClick" AutomationProperties.AutomationId="InstallButton"><StackPanel><TextBlock Text="⇩" FontSize="24" HorizontalAlignment="Center"/><TextBlock Text="安装 APK" Margin="0,7,0,0"/></StackPanel></Button>
-                <Button Style="{StaticResource ActionButton}" Tag="keys" Click="ActionClick" AutomationProperties.AutomationId="KeysButton"><StackPanel><TextBlock Text="⌘" FontSize="24" HorizontalAlignment="Center"/><TextBlock Text="按键控制" Margin="0,7,0,0"/></StackPanel></Button>
-                <Button Style="{StaticResource ActionButton}" Tag="info" Click="ActionClick" AutomationProperties.AutomationId="InfoButton"><StackPanel><TextBlock Text="ⓘ" FontSize="24" HorizontalAlignment="Center"/><TextBlock Text="设备信息" Margin="0,7,0,0"/></StackPanel></Button>
-                <Button Style="{StaticResource ActionButton}" Tag="logcat" Click="ActionClick" AutomationProperties.AutomationId="LogcatButton"><StackPanel><TextBlock Text="≡" FontSize="24" HorizontalAlignment="Center"/><TextBlock Text="查看日志" Margin="0,7,0,0"/></StackPanel></Button>
+                <Button Style="{StaticResource ActionButton}" Tag="mirror" Click="ActionClick" Background="#F1EEFF" AutomationProperties.AutomationId="MirrorButton"><StackPanel><TextBlock Text="▣" FontSize="19" Foreground="{StaticResource Accent}" HorizontalAlignment="Center"/><TextBlock Text="设备投屏" Margin="0,3,0,0"/></StackPanel></Button>
+                <Button Style="{StaticResource ActionButton}" Tag="screenshot" Click="ActionClick" ToolTip="选择位置和名称保存截图" AutomationProperties.AutomationId="ScreenshotButton">
+                  <StackPanel><Viewbox Width="19" Height="19"><Path Data="{StaticResource CameraGlyphGeometry}" Style="{StaticResource ToolbarGlyph}"/></Viewbox><TextBlock Text="截图另存" Margin="0,3,0,0"/></StackPanel>
+                </Button>
+                <Button Style="{StaticResource ActionButton}" Tag="install" Click="ActionClick" AutomationProperties.AutomationId="InstallButton"><StackPanel><TextBlock Text="⇩" FontSize="19" HorizontalAlignment="Center"/><TextBlock Text="安装 APK" Margin="0,3,0,0"/></StackPanel></Button>
+                <Button Style="{StaticResource ActionButton}" Tag="keys" Click="ActionClick" AutomationProperties.AutomationId="KeysButton"><StackPanel><TextBlock Text="⌘" FontSize="19" HorizontalAlignment="Center"/><TextBlock Text="按键控制" Margin="0,3,0,0"/></StackPanel></Button>
+                <Button Style="{StaticResource ActionButton}" Tag="info" Click="ActionClick" AutomationProperties.AutomationId="InfoButton"><StackPanel><TextBlock Text="ⓘ" FontSize="19" HorizontalAlignment="Center"/><TextBlock Text="设备信息" Margin="0,3,0,0"/></StackPanel></Button>
+                <Button Style="{StaticResource ActionButton}" Tag="logcat" Click="ActionClick" AutomationProperties.AutomationId="LogcatButton"><StackPanel><TextBlock Text="≡" FontSize="19" HorizontalAlignment="Center"/><TextBlock Text="查看日志" Margin="0,3,0,0"/></StackPanel></Button>
               </UniformGrid>
-              <TextBlock Text="仅操作当前设备。投屏在 scrcpy 独立窗口打开。" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,16,0,0"/>
             </StackPanel>
           </Grid>
         </ScrollViewer>
-        <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="14,2" Background="#FBFAFF" CornerRadius="0,0,18,18"><DockPanel><Button x:Name="ResultButton" DockPanel.Dock="Right" Content="结果" Click="ResultsClick" IsEnabled="False" Padding="7,2" Margin="8,0,0,0" ToolTip="查看、复制或导出最近的操作结果" AutomationProperties.AutomationId="ResultsButton"/><TextBlock Text="{Binding Footer}" Foreground="{Binding FooterTone}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Footer}" AutomationProperties.AutomationId="FooterStatus"/></DockPanel></Border>
+        <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="14,2" Background="#FBFAFF" CornerRadius="0,0,18,18">
+          <DockPanel>
+            <Button x:Name="ResultButton" DockPanel.Dock="Right" Content="结果" Click="ResultsClick" IsEnabled="False" Padding="7,2" Margin="8,0,0,0" ToolTip="查看、复制或导出最近的操作结果" AutomationProperties.AutomationId="ResultsButton"/>
+            <Button x:Name="OpenLatestScreenshotButton" DockPanel.Dock="Right" Content="打开图片" Click="OpenLatestScreenshotClick" Visibility="Collapsed" Padding="7,2" Margin="8,0,0,0" ToolTip="打开最近保存的截图" AutomationProperties.AutomationId="OpenLatestScreenshotButton"/>
+            <TextBlock Text="{Binding Footer}" Foreground="{Binding FooterTone}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" ToolTip="{Binding Footer}" AutomationProperties.AutomationId="FooterStatus"/>
+          </DockPanel>
+        </Border>
       </Grid>
       <StackPanel x:Name="EdgePanel" Visibility="Collapsed" Margin="7,8">
         <Border x:Name="EdgeSummary" Width="36" Background="Transparent" Focusable="True" Cursor="SizeAll" PreviewMouseLeftButtonDown="SummaryMouseDown" PreviewMouseLeftButtonUp="SummaryMouseUp" PreviewMouseMove="SummaryMouseMove" LostMouseCapture="SummaryLostCapture" PreviewKeyDown="SummaryKeyDown" ToolTip="按住拖动浮窗" AutomationProperties.AutomationId="EdgeSummary" AutomationProperties.Name="ADB 和设备数量，拖动或使用方向键移动浮窗">

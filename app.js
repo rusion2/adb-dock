@@ -17,12 +17,12 @@ const deviceStates = {
   offline: { label: "离线", tone: "gray", marker: "−" },
 };
 const scenarios = { healthy: ["pixel", "xiaomi"], mixed: ["pixel", "xiaomi", "samsung"], offline: ["pixel", "oneplus"], empty: [], error: [] };
-const commonActions = [["mirror", "mirror", "设备投屏", "primary-action"], ["screenshot", "camera", "截图保存", ""], ["install", "install", "安装 APK", ""], ["keys", "grid", "按键控制", ""], ["info", "info", "设备信息", ""], ["logcat", "log", "查看日志", ""]];
-const state = { scenario: "mixed", selected: null, previewDevice: null, showFloatingTab: true, autoCollapseEnabled: true, collapseDelaySeconds: 2, collapsed: false, hiddenToTray: false, side: null, edgeOffset: null, topmost: true, task: null, generation: 0 };
+const commonActions = [["mirror", "mirror", "设备投屏", ""], ["screenshot", "camera", "一键截图", "primary-action"], ["install", "install", "安装 APK", ""], ["keys", "grid", "按键控制", ""], ["info", "info", "设备信息", ""], ["logcat", "log", "查看日志", ""]];
+const state = { scenario: "mixed", selected: null, showFloatingTab: true, autoCollapseEnabled: true, collapseDelaySeconds: 2, collapsed: false, hiddenToTray: false, side: null, edgeOffset: null, topmost: true, tasks: new Map(), generation: 0 };
+const remarks = new Map(currentDeviceRemarks());
 const desktop = $("#desktop");
 const dock = $("#dock");
 const edgeTab = $("#edge-tab");
-const devicePreview = $("#device-preview");
 const dialog = $("#action-dialog");
 let toastTimer;
 let drag = null;
@@ -37,7 +37,6 @@ let pointerPosition = null;
 let pointerOutsideDocument = false;
 let openerBounds = null;
 let contextMenuOpen = false;
-let previewTimer = null;
 
 function stopAutoCollapse() {
   clearTimeout(collapseTimer);
@@ -55,21 +54,7 @@ function pointerInsidePanel() {
   return pointerInsideBounds(dock.getBoundingClientRect(), openerBounds);
 }
 
-function refreshPreviewDismissal(freshGrace = false) {
-  if (freshGrace) { clearTimeout(previewTimer); previewTimer = null; }
-  const paused = !state.previewDevice || devicePreview.hidden || !state.collapsed || dialog.open || filePickerOpen || drag || edgePress || iconSwipe || contextMenuOpen;
-  if (paused || pointerInsideBounds(edgeTab.getBoundingClientRect(), devicePreview.getBoundingClientRect())) {
-    clearTimeout(previewTimer); previewTimer = null; return;
-  }
-  if (previewTimer !== null) return;
-  previewTimer = setTimeout(() => {
-    previewTimer = null;
-    if (state.previewDevice && !dialog.open && !filePickerOpen && !drag && !edgePress && !iconSwipe && !contextMenuOpen && !pointerInsideBounds(edgeTab.getBoundingClientRect(), devicePreview.getBoundingClientRect())) closeDevicePreview();
-  }, 5000);
-}
-
 function refreshAutoCollapse(freshGrace = false) {
-  refreshPreviewDismissal(freshGrace);
   if (freshGrace) stopAutoCollapse();
   const paused = state.collapsed || state.hiddenToTray || !state.showFloatingTab || !state.autoCollapseEnabled || dialog.open || filePickerOpen || drag || edgePress || iconSwipe || contextMenuOpen;
   if (paused || pointerInsidePanel()) { stopAutoCollapse(); return; }
@@ -98,7 +83,7 @@ document.addEventListener("pointerout", (event) => {
   refreshAutoCollapse();
 });
 document.addEventListener("contextmenu", (event) => {
-  if (!dock.contains(event.target) && !edgeTab.contains(event.target) && !devicePreview.contains(event.target)) return;
+  if (!dock.contains(event.target) && !edgeTab.contains(event.target)) return;
   contextMenuOpen = true;
   refreshAutoCollapse(true);
 });
@@ -121,6 +106,22 @@ function currentDevice() {
   return currentDevices().find((device) => device.id === state.selected);
 }
 
+function currentDeviceRemarks() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("adb-dock-device-remarks"));
+    return Object.values(devices)
+      .filter((device) => typeof stored?.[device.serial] === "string")
+      .map((device) => [device.serial, stored[device.serial].slice(0, 24)]);
+  } catch {
+    return [];
+  }
+}
+
+function deviceDisplayName(device) {
+  const remark = remarks.get(device.serial);
+  return remark ? `${remark} · ${device.name}` : device.name;
+}
+
 function notify(message) {
   const toast = $("#toast");
   clearTimeout(toastTimer);
@@ -139,10 +140,11 @@ function footer(message, tone = "green", busy = false) {
 function rowMarkup(device, index) {
   const online = device.state === "online";
   const status = deviceStates[device.state];
-  return `<div class="device-row ${index === 0 ? "primary" : ""}" role="button" tabindex="0" data-device="${device.id}" aria-label="${escapeHTML(device.name)}，${status.label}，${online ? "查看操作" : "查看连接指引"}">
+  const name = escapeHTML(deviceDisplayName(device));
+  return `<div class="device-row ${index === 0 ? "primary" : ""}" role="button" tabindex="0" data-device="${device.id}" aria-label="${name}，${status.label}，${online ? "查看操作" : "查看连接指引"}">
     <span class="device-avatar ${device.avatar}">${icon("device")}</span>
-    <div class="device-identity"><div class="device-name-line"><span class="device-name">${device.name}</span><span class="connection-badge">${device.connection === "网络" ? icon("wifi") : ""}${device.connection}</span></div><div class="device-serial">${device.serial}</div></div>
-    <div class="device-end"><span class="device-state ${online ? "" : device.state === "offline" ? "offline" : "warning"}"><span class="status-dot ${status.tone}"></span>${status.label}</span><span class="row-action">${online ? `<button class="quick-camera" data-quick="${device.id}" aria-label="对 ${device.name} 模拟截图" title="快捷截图">${icon("camera")}</button>` : "查看指引"}${icon("chevron")}</span></div>
+    <div class="device-identity"><div class="device-name-line"><span class="device-name" title="${name}">${name}</span><span class="connection-badge">${device.connection === "网络" ? icon("wifi") : ""}${device.connection}</span></div><div class="device-serial">${device.serial}</div></div>
+    <div class="device-end"><span class="device-state ${online ? "" : device.state === "offline" ? "offline" : "warning"}"><span class="status-dot ${status.tone}"></span>${status.label}</span><span class="row-action"><button class="quick-action" type="button" data-remark="${device.id}" aria-label="编辑 ${name} 的备注" title="编辑设备备注">${icon("edit")}</button>${online ? `<button class="quick-action" type="button" data-quick="${device.id}" ${state.tasks.has(device.id) ? "disabled" : ""} aria-label="对 ${name} 模拟一键截图" title="一键截图">${icon("camera")}</button>` : "查看指引"}${icon("chevron")}</span></div>
   </div>`;
 }
 
@@ -162,16 +164,17 @@ function listMarkup() {
 }
 
 function detailMarkup(device) {
-  return `<div class="detail-heading"><button class="icon-button" id="back-button" aria-label="返回设备列表">${icon("back")}</button><h2>设备操作</h2><span>已绑定当前设备</span></div>
-    ${deviceSelectorMarkup("operation-device-select", device.id, true)}
-    <div class="device-detail-card"><span class="device-avatar ${device.avatar}">${icon("device")}</span><div><div class="detail-device-name">${device.name}</div><div class="detail-meta"><span class="status-dot green"></span><span>在线</span><span>·</span><span>${device.android}</span><span>·</span><span>${device.connection}</span></div><div class="detail-serial"><span>${device.serial}</span><button class="icon-button" id="copy-serial" aria-label="复制设备序列号" title="复制序列号">${icon("copy")}</button></div></div></div>
-    <p class="action-section-label">常用操作</p><div class="action-grid">${commonActions.map(([action, image, label, className]) => `<button class="device-action ${className}" data-action="${action}" ${state.task?.deviceId === device.id ? "disabled" : ""}>${icon(image)}<span>${label}</span></button>`).join("")}</div>
-    <div class="operation-note">${icon("info")}<span>仅操作当前设备。投屏由 scrcpy 打开独立窗口；原型不会执行真实命令。</span></div>`;
+  const disabled = state.tasks.has(device.id) ? "disabled" : "";
+  return `<div class="detail-heading"><button class="icon-button" id="back-button" aria-label="返回设备列表">${icon("back")}</button><h2>设备操作</h2>${deviceSelectorMarkup(device.id)}</div>
+    <div class="device-detail-meta"><span class="detail-serial" title="${escapeHTML(device.serial)}">${escapeHTML(device.serial)}</span><span class="connection-badge">${device.connection === "网络" ? icon("wifi") : ""}${device.connection}</span><button class="icon-button" id="copy-serial" type="button" aria-label="复制设备序列号" title="复制序列号">${icon("copy")}</button><button class="secondary-button remark-button" type="button" data-remark="${device.id}" aria-label="编辑设备备注">${icon("edit")}备注</button></div>
+    <div class="action-grid">${commonActions.map(([action, image, label, className]) => `<button class="device-action ${className}" type="button" data-action="${action}" ${disabled}>${icon(image)}<span>${label}</span></button>`).join("")}</div>
+    <div class="detail-tools"><button class="text-button" type="button" data-action="screenshot-as" ${disabled}>截图另存为…</button></div>`;
 }
 
-function deviceSelectorMarkup(id, selected, onlineOnly = false) {
-  const options = currentDevices().filter((device) => !onlineOnly || device.state === "online");
-  return `<label class="device-selector" for="${id}"><span>切换设备</span><select id="${id}" aria-label="切换操作设备">${options.map((device) => `<option value="${escapeHTML(device.id)}" ${device.id === selected ? "selected" : ""}>${escapeHTML(device.name)} · ${escapeHTML(device.serial)}${onlineOnly ? "" : ` · ${deviceStates[device.state].label}`}</option>`).join("")}</select></label>`;
+function deviceSelectorMarkup(selected) {
+  const options = currentDevices().filter((device) => device.state === "online");
+  const selectedName = escapeHTML(deviceDisplayName(devices[selected]));
+  return `<select class="device-selector" id="operation-device-select" aria-label="切换操作设备" title="${selectedName}">${options.map((device) => `<option value="${escapeHTML(device.id)}" ${device.id === selected ? "selected" : ""}>${escapeHTML(deviceDisplayName(device))} · ${escapeHTML(device.serial)}</option>`).join("")}</select>`;
 }
 
 function bindDeviceSelector(select, change) {
@@ -192,6 +195,11 @@ function bindDeviceSelector(select, change) {
 
 function render() {
   const device = currentDevice();
+  const operationView = Boolean(device);
+  if (dock.classList.contains("operation-view") !== operationView) {
+    dock.classList.toggle("operation-view", operationView);
+    if (!dock.hidden) positionDock(dock.offsetLeft, state.side === "bottom" ? bounds().maxY : dock.offsetTop);
+  }
   $("#dock-content").innerHTML = device ? detailMarkup(device) : listMarkup();
   $("#view-caption").textContent = state.hiddenToTray ? "托盘隐藏" : state.collapsed ? "贴边状态" : device ? "设备操作" : "设备面板";
   $$(".scenario").forEach((button) => {
@@ -201,7 +209,6 @@ function render() {
   });
   renderEdge();
   bindContent();
-  if (state.previewDevice) renderDevicePreview();
 }
 
 function renderEdge() {
@@ -224,65 +231,12 @@ function renderEdge() {
     ? `<button class="edge-placeholder ${error ? "error" : ""}" data-edge-placeholder="${error ? "error" : "empty"}" aria-label="${error ? "ADB 异常，检查设置" : "未发现设备，查看连接指引"}">${icon(error ? "warning" : "usb")}</button>`
     : list.slice(0, visibleCount).map((device) => {
       const status = deviceStates[device.state];
-      const label = `${device.name}，${status.label}，${device.connection}，${device.serial}；点击或向左滑动预览此设备操作`;
-      return `<button class="edge-device-button ${device.state}" data-edge-device="${escapeHTML(device.id)}" aria-label="${escapeHTML(label)}"><svg aria-hidden="true"><use href="#i-device"/></svg><span class="edge-device-marker" aria-hidden="true">${status.marker}</span><span class="edge-tooltip" aria-hidden="true"><b>${escapeHTML(device.name)}</b><em>${status.label} · ${device.connection}</em><small>${escapeHTML(device.serial)}</small></span></button>`;
+      const name = deviceDisplayName(device);
+      const remark = remarks.get(device.serial);
+      const label = `${name}，${status.label}，${device.connection}，${device.serial}；点击或向左滑动${device.state === "online" ? "打开此设备的操作面板" : "查看连接指引"}`;
+      return `<button class="edge-device-button ${device.state}${remark ? " has-remark" : ""}" data-edge-device="${escapeHTML(device.id)}" aria-label="${escapeHTML(label)}">${icon("device")}<span class="edge-device-marker" aria-hidden="true">${status.marker}</span>${remark ? `<span class="edge-device-remark" aria-hidden="true">${escapeHTML(remark)}</span>` : ""}<span class="edge-tooltip" aria-hidden="true"><b>${escapeHTML(name)}</b><em>${status.label} · ${device.connection}</em><small>${escapeHTML(device.serial)}</small></span></button>`;
     }).join("") + (list.length > visibleCount ? `<button class="edge-more" data-edge-more aria-label="另有 ${list.length - visibleCount} 台设备，展开全部设备">+${list.length - visibleCount}</button>` : "");
   if (state.collapsed && !edgePress?.active) positionEdge();
-  if (state.previewDevice) positionDevicePreview();
-}
-
-function closeDevicePreview() {
-  clearTimeout(previewTimer);
-  previewTimer = null;
-  state.previewDevice = null;
-  devicePreview.hidden = true;
-}
-
-function positionDevicePreview() {
-  if (!state.previewDevice || devicePreview.hidden) return;
-  const tabLeft = edgeTab.offsetLeft;
-  const tabRight = tabLeft + edgeTab.offsetWidth;
-  devicePreview.style.width = `${Math.min(300, desktop.clientWidth - 16)}px`;
-  const width = devicePreview.offsetWidth;
-  const height = devicePreview.offsetHeight;
-  const workHeight = desktop.clientHeight - 48;
-  let x;
-  let y = edgeTab.offsetTop + edgeTab.offsetHeight / 2 - height / 2;
-  if (tabLeft >= width) x = tabLeft - width;
-  else if (desktop.clientWidth - tabRight >= width) x = tabRight;
-  else {
-    x = Math.max(8, Math.min(desktop.clientWidth - width - 8, tabLeft + edgeTab.offsetWidth / 2 - width / 2));
-    const below = edgeTab.offsetTop + edgeTab.offsetHeight;
-    y = below + height <= workHeight ? below : edgeTab.offsetTop - height;
-  }
-  devicePreview.style.left = `${x}px`;
-  devicePreview.style.top = `${Math.max(0, Math.min(Math.max(0, workHeight - height), y))}px`;
-}
-
-function renderDevicePreview() {
-  const device = currentDevices().find((item) => item.id === state.previewDevice);
-  if (!device || !state.collapsed || !state.showFloatingTab) { closeDevicePreview(); return; }
-  const status = deviceStates[device.state];
-  devicePreview.innerHTML = `<div class="preview-heading"><div><strong id="device-preview-title">${escapeHTML(device.name)}</strong><small>${status.label} · ${escapeHTML(device.connection)}</small></div><button class="icon-button" type="button" data-preview-close aria-label="关闭设备预览">${icon("close")}</button></div>
-    ${deviceSelectorMarkup("preview-device-select", device.id)}
-    <div class="preview-serial"><span>${escapeHTML(device.serial)}</span><button class="icon-button" type="button" data-preview-copy data-preview-device="${escapeHTML(device.id)}" title="复制此设备序列号" aria-label="复制此设备序列号">${icon("copy")}</button></div>
-    ${device.state === "online" ? `<div class="preview-action-grid">${commonActions.map(([action, image, label, className]) => `<button class="device-action ${className}" type="button" data-preview-action="${action}" data-preview-device="${escapeHTML(device.id)}" ${state.task?.deviceId === device.id ? "disabled" : ""}>${icon(image)}<span>${label}</span></button>`).join("")}</div>` : `<p class="dialog-copy">${device.state === "unauthorized" ? "请在手机上允许此电脑进行 USB 调试。" : "设备当前无法通信，暂不能执行设备操作。"}</p><button class="secondary-button" type="button" data-preview-guide>查看连接指引</button>`}
-    <p class="preview-note">仅操作上方设备。移开预览与贴边条 5 秒后关闭预览。</p>`;
-  devicePreview.hidden = false;
-  bindDeviceSelector($("#preview-device-select"), (id) => {
-    openDevicePreview(id);
-    $("#preview-device-select").focus({ preventScroll: true });
-  });
-  positionDevicePreview();
-}
-
-function openDevicePreview(id) {
-  if (!state.collapsed || !state.showFloatingTab || !currentDevices().some((item) => item.id === id)) return;
-  if (state.previewDevice !== id || devicePreview.hidden) {
-    state.previewDevice = id;
-    renderDevicePreview();
-  }
-  refreshAutoCollapse(true);
 }
 
 function positionEdge(offset = state.edgeOffset) {
@@ -319,7 +273,8 @@ function bindContent() {
       if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(); }
     });
   });
-  $$("[data-quick]").forEach((button) => button.addEventListener("click", () => runTask(devices[button.dataset.quick], "截图", "模拟截图完成 · 未生成实际文件")));
+  $$("[data-quick]").forEach((button) => button.addEventListener("click", () => captureScreenshot(devices[button.dataset.quick])));
+  $$("[data-remark]").forEach((button) => button.addEventListener("click", () => editDeviceRemark(devices[button.dataset.remark])));
   $("#authorization-help")?.addEventListener("click", () => showGuide(true));
   $("#empty-action")?.addEventListener("click", () => state.scenario === "error" ? showSettings() : showGuide());
   $("#back-button")?.addEventListener("click", () => { state.selected = null; render(); $("[data-device]")?.focus({ preventScroll: true }); });
@@ -330,21 +285,24 @@ function bindContent() {
 function openDevice(id) {
   const device = currentDevices().find((item) => item.id === id);
   if (!device) return;
-  if (device.state === "unauthorized") { showGuide(true); return; }
+  const online = device.state === "online";
+  if (online || state.collapsed) {
+    state.selected = online ? id : null;
+    render();
+    expand();
+    $(online ? "#back-button" : `[data-device="${id}"]`)?.focus({ preventScroll: true });
+  }
+  if (device.state === "unauthorized") { showGuide(true, device); return; }
   if (device.state === "offline") {
     openDialog("设备暂时离线", `${deviceSummary(device)}<p class="dialog-copy">ADB 发现了这台设备，但暂时无法通信。可检查数据线、解锁手机或重新连接；网络设备请检查网络连接。离线期间不开放设备命令。</p><div class="dialog-buttons"><button class="primary-button" id="offline-done" data-focus>知道了</button></div>`);
     $("#offline-done").addEventListener("click", closeDialog);
-    return;
   }
-  state.selected = id;
-  render();
-  $("#back-button").focus({ preventScroll: true });
 }
 
 function changeScenario(scenario) {
-  const interrupted = Boolean(state.task);
+  const interrupted = state.tasks.size > 0;
   state.generation++;
-  state.task = null;
+  state.tasks.clear();
   state.scenario = scenario;
   state.selected = null;
   fileTarget = null;
@@ -357,27 +315,30 @@ function runTask(device, action, message) {
     notify("设备不在线，未执行操作。");
     return;
   }
-  if (state.task) { notify("已有模拟任务执行中，请稍候。"); return; }
-  const task = { deviceId: device.id, generation: state.generation };
-  state.task = task;
-  footer(`正在为 ${device.name} 模拟${action}…`, "green", true);
+  if (state.tasks.has(device.id)) { notify("这台设备已有模拟任务执行中，请稍候。"); return; }
+  const generation = state.generation;
+  const progress = `正在为 ${device.name} 模拟${action}…`;
+  state.tasks.set(device.id, progress);
+  footer(progress, "green", true);
   render();
   setTimeout(() => {
-    if (state.task !== task || task.generation !== state.generation) return;
-    state.task = null;
+    if (generation !== state.generation) return;
+    state.tasks.delete(device.id);
     if (!currentDevices().some((item) => item.id === device.id)) {
       footer("设备已断开，模拟任务未完成", "amber");
     } else {
       footer(message);
       notify(`${device.name}：${message}`);
     }
+    if (state.tasks.size) footer(state.tasks.values().next().value, "green", true);
     render();
   }, action === "安装" ? 1600 : 950);
 }
 
 function handleAction(action, device = currentDevice()) {
   if (!device) return;
-  if (action === "screenshot") runTask(device, "截图", "模拟截图完成 · 未生成实际文件");
+  if (action === "screenshot") captureScreenshot(device);
+  if (action === "screenshot-as") showScreenshotSaveAs(device);
   if (action === "install") {
     fileTarget = { deviceId: device.id, generation: state.generation };
     filePickerOpen = true;
@@ -394,7 +355,6 @@ function handleAction(action, device = currentDevice()) {
 
 function openDialog(title, body) {
   stopAutoCollapse();
-  clearTimeout(previewTimer); previewTimer = null;
   if (!dialog.open) dialogReturnFocus = document.activeElement;
   $("#dialog-title").textContent = title;
   $("#dialog-body").innerHTML = body;
@@ -407,12 +367,51 @@ function closeDialog() {
 }
 
 function deviceSummary(device) {
-  return `<div class="dialog-device">${icon("device")}<div><strong>${escapeHTML(device.name)}</strong><small>${escapeHTML(device.serial)}</small></div></div>`;
+  return `<div class="dialog-device">${icon("device")}<div><strong>${escapeHTML(deviceDisplayName(device))}</strong><small>${escapeHTML(device.serial)}</small></div></div>`;
 }
 
-function showGuide(authorization = false) {
-  openDialog(authorization ? "还差手机上的一次确认" : "让你的设备出现在这里", `<p class="dialog-copy">${authorization ? "ADB 已经发现这台设备，但尚未获得调试授权。电脑端无法代替你确认授权。" : "通过 USB 连接，通常只需要下面三个步骤。已连接的网络设备和模拟器也会自动出现在列表中。"}</p><ol class="guide-steps"><li>使用支持数据传输的 USB 线连接设备，保持手机解锁。</li><li>在手机的开发者选项中开启「USB 调试」。</li><li>出现「允许 USB 调试吗？」时，核对电脑并选择允许。</li></ol><div class="dialog-buttons"><button class="primary-button" id="guide-done" data-focus>知道了</button></div>`);
+function showGuide(authorization = false, device = null) {
+  openDialog(authorization ? "还差手机上的一次确认" : "让你的设备出现在这里", `${device ? deviceSummary(device) : ""}<p class="dialog-copy">${authorization ? "ADB 已经发现这台设备，但尚未获得调试授权。电脑端无法代替你确认授权。" : "通过 USB 连接，通常只需要下面三个步骤。已连接的网络设备和模拟器也会自动出现在列表中。"}</p><ol class="guide-steps"><li>使用支持数据传输的 USB 线连接设备，保持手机解锁。</li><li>在手机的开发者选项中开启「USB 调试」。</li><li>出现「允许 USB 调试吗？」时，核对电脑并选择允许。</li></ol><div class="dialog-buttons"><button class="primary-button" id="guide-done" data-focus>知道了</button></div>`);
   $("#guide-done").addEventListener("click", closeDialog);
+}
+
+function editDeviceRemark(device) {
+  const remark = remarks.get(device.serial) ?? "";
+  openDialog("编辑设备备注", `${deviceSummary(device)}<p class="dialog-copy">备注会作为贴边浮窗的短标签，最多 24 个字符；留空即可移除。</p><form id="remark-form"><label class="field-label" for="device-remark-input">设备备注</label><input class="field-input" id="device-remark-input" maxlength="24" value="${escapeHTML(remark)}" data-focus><div class="dialog-buttons"><button class="secondary-button" type="button" id="cancel-remark">取消</button><button class="primary-button" type="submit">保存</button></div></form>`);
+  $("#cancel-remark").addEventListener("click", closeDialog);
+  $("#remark-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = $("#device-remark-input").value.trim();
+    if (value) remarks.set(device.serial, value);
+    else remarks.delete(device.serial);
+    try {
+      localStorage.setItem("adb-dock-device-remarks", JSON.stringify(Object.fromEntries(remarks)));
+    } catch {
+      notify("浏览器限制了本地存储，备注会保留到页面关闭。");
+    }
+    closeDialog();
+    render();
+    $(`[data-remark="${device.id}"]`).focus({ preventScroll: true });
+  });
+}
+
+function screenshotFileName() {
+  return `screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+}
+
+function captureScreenshot(device, fileName = screenshotFileName()) {
+  runTask(device, "截图", `模拟截图完成 · ${fileName}（未生成实际文件）`);
+}
+
+function showScreenshotSaveAs(device) {
+  openDialog("截图另存为", `${deviceSummary(device)}<form id="screenshot-form"><label class="field-label" for="screenshot-file-name">文件名</label><input class="field-input" id="screenshot-file-name" maxlength="128" value="${screenshotFileName()}" data-focus><div class="dialog-buttons"><button class="secondary-button" type="button" id="cancel-screenshot">取消</button><button class="primary-button" type="submit">模拟保存</button></div></form>`);
+  $("#cancel-screenshot").addEventListener("click", closeDialog);
+  $("#screenshot-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = $("#screenshot-file-name").value.trim() || screenshotFileName();
+    closeDialog();
+    captureScreenshot(device, /\.png$/i.test(name) ? name : `${name}.png`);
+  });
 }
 
 function showKeys(device) {
@@ -431,9 +430,43 @@ function showInfo(device) {
 }
 
 function showLogcat(device) {
-  const logs = `--------- 演示日志 / 非真实设备输出 ---------\n14:32:06.138 I ActivityTaskManager: START MainActivity\n14:32:06.201 D AppCompatDelegate: Configuration ready\n14:32:06.319 I ViewRootImpl: Window focus changed\n14:32:06.422 D RenderThread: Frame completed\n14:32:07.014 I ADBDockDemo: Device is ready\n14:32:07.360 D Choreographer: Input event received\n14:32:08.081 I ADBDockDemo: All systems nominal`;
-  openDialog("Logcat 日志预览", `${deviceSummary(device)}<p class="dialog-copy">固定演示日志。原生客户端将提供实时订阅、暂停和导出。</p><pre class="log-output">${escapeHTML(logs)}</pre><div class="dialog-buttons"><button class="secondary-button" id="copy-log">${icon("copy")}复制日志</button><button class="primary-button" id="log-done" data-focus>关闭</button></div>`);
-  $("#copy-log").addEventListener("click", () => copyText(logs));
+  const logs = ["--------- 模拟日志 ---------", "14:32:06.138 I ActivityTaskManager: START MainActivity", "14:32:06.201 D AppCompatDelegate: Configuration ready", "14:32:06.319 I ViewRootImpl: Window focus changed"];
+  const messages = ["D RenderThread: Frame completed", "I ADBDockDemo: Device is ready", "D Choreographer: Input event received"];
+  const retainedLogLimit = 500;
+  openDialog("Logcat 日志预览", `${deviceSummary(device)}<div class="log-toolbar"><button class="secondary-button" id="pause-log" data-focus>暂停显示</button><span id="log-status">显示中</span></div><pre class="log-output" id="log-output" tabindex="0" aria-label="模拟设备日志"></pre><div class="dialog-buttons"><button class="secondary-button" id="copy-log">${icon("copy")}复制全部日志</button><button class="primary-button" id="log-done">关闭</button></div>`);
+  const output = $("#log-output");
+  const pause = $("#pause-log");
+  const status = $("#log-status");
+  let pending = 0;
+  let paused = false;
+  let nextMessage = 0;
+  function displayLogs() {
+    output.textContent = `${logs.join("\n")}\n`;
+    output.scrollTop = output.scrollHeight;
+  }
+  displayLogs();
+  const timer = setInterval(() => {
+    if (!dialog.open || !output.isConnected) { clearInterval(timer); return; }
+    const timestamp = new Date().toTimeString().slice(0, 8);
+    logs.push(`${timestamp} ${messages[nextMessage++ % messages.length]}`);
+    if (logs.length > retainedLogLimit) logs.shift();
+    if (paused) {
+      pending++;
+      status.textContent = pending > retainedLogLimit
+        ? `已暂停 · 收到 ${pending} 条 · 保留最近 ${retainedLogLimit} 条`
+        : `已暂停 · ${pending} 条待显示`;
+    } else {
+      displayLogs();
+    }
+  }, 850);
+  dialog.addEventListener("close", () => clearInterval(timer), { once: true });
+  pause.addEventListener("click", () => {
+    paused = !paused;
+    pause.textContent = paused ? "继续显示" : "暂停显示";
+    status.textContent = paused ? "已暂停 · 0 条待显示" : "显示中";
+    if (!paused) { pending = 0; displayLogs(); }
+  });
+  $("#copy-log").addEventListener("click", () => copyText(logs.join("\n")));
   $("#log-done").addEventListener("click", closeDialog);
 }
 
@@ -486,7 +519,7 @@ async function copyText(text) {
 function updateDesktopTip() {
   $("#desktop-tip").lastElementChild.textContent = state.hiddenToTray
     ? "面板已隐藏到模拟托盘 · 点击任务栏中的 ADB Dock 图标重新打开"
-    : state.collapsed ? "ADB 和数量区域仅拖动 · 点击末端“展开”按钮打开列表"
+    : state.collapsed ? "点击设备直达操作 · 点击“展开”查看全部设备"
     : !state.showFloatingTab ? "显示浮窗已关闭 · 面板保持显示，关闭后隐藏到模拟托盘"
     : state.autoCollapseEnabled ? `离开面板 ${state.collapseDelaySeconds} 秒后收起 · 主动向边缘拖动可立即收起`
     : "自动收起已关闭 · 可主动向边缘拖动或点击关闭收起";
@@ -518,7 +551,6 @@ function positionDock(x, y) {
 
 function resetPosition() {
   stopAutoCollapse();
-  closeDevicePreview();
   openerBounds = null;
   dock.hidden = false;
   state.collapsed = false;
@@ -557,7 +589,6 @@ function collapse(manual = false) {
 function expand(focus = false) {
   if ((!state.collapsed && !state.hiddenToTray) || edgePress) return;
   stopAutoCollapse();
-  closeDevicePreview();
   const fromTab = state.collapsed;
   openerBounds = fromTab ? edgeTab.getBoundingClientRect() : null;
   const centerX = edgeTab.offsetLeft + edgeTab.offsetWidth / 2;
@@ -580,7 +611,6 @@ function closePanel() {
   if (dialog.open || filePickerOpen || drag || edgePress || state.hiddenToTray) return;
   if (state.showFloatingTab) { collapse(true); return; }
   stopAutoCollapse();
-  closeDevicePreview();
   openerBounds = null;
   state.collapsed = false;
   state.hiddenToTray = true;
@@ -619,7 +649,6 @@ function moveEdgePress(event) {
   edgeTab.style.left = `${Math.max(0, Math.min(desktop.clientWidth - edgeTab.offsetWidth, press.left + dx))}px`;
   edgeTab.style.right = "auto";
   edgeTab.style.top = `${Math.max(0, Math.min(desktop.clientHeight - 48 - edgeTab.offsetHeight, press.top + dy))}px`;
-  positionDevicePreview();
 }
 edgeSummary.addEventListener("pointermove", moveEdgePress);
 function finishEdgePress(event, cancelled = false) {
@@ -708,7 +737,7 @@ edgeOpenButton.addEventListener("click", () => { state.selected = null; render()
 edgeTab.addEventListener("click", (event) => {
   const deviceButton = event.target.closest("[data-edge-device]");
   if (deviceButton) {
-    openDevicePreview(deviceButton.dataset.edgeDevice);
+    openDevice(deviceButton.dataset.edgeDevice);
     return;
   }
   if (event.target.closest("[data-edge-more]")) {
@@ -736,34 +765,25 @@ function moveDeviceIconSwipe(event) {
   const dy = event.clientY - iconSwipe.y;
   if (!iconSwipe.active && dx <= -12 && Math.abs(dx) > Math.abs(dy)) {
     iconSwipe.active = true;
-    openDevicePreview(iconSwipe.id);
   }
 }
 edgeTab.addEventListener("pointermove", moveDeviceIconSwipe);
 function finishDeviceIconSwipe(event) {
   if (!iconSwipe || iconSwipe.pointerId !== event.pointerId) return;
   if (event.type === "pointerup") moveDeviceIconSwipe(event);
+  const deviceId = event.type === "pointerup" && iconSwipe.active ? iconSwipe.id : null;
   iconSwipe = null;
+  if (deviceId) openDevice(deviceId);
   refreshAutoCollapse(true);
 }
 edgeTab.addEventListener("pointerup", finishDeviceIconSwipe);
 edgeTab.addEventListener("pointercancel", finishDeviceIconSwipe);
 edgeTab.addEventListener("lostpointercapture", finishDeviceIconSwipe);
-devicePreview.addEventListener("click", (event) => {
-  const device = currentDevices().find((item) => item.id === state.previewDevice);
-  if (event.target.closest("[data-preview-close]")) { closeDevicePreview(); return; }
-  if (!device) return;
-  if (event.target.closest("[data-preview-guide]")) { showGuide(device.state === "unauthorized"); return; }
-  const button = event.target.closest("[data-preview-action], [data-preview-copy]");
-  if (!button || button.dataset.previewDevice !== device.id) return;
-  if (button.hasAttribute("data-preview-copy")) copyText(device.serial);
-  else handleAction(button.dataset.previewAction, device);
-});
 $("#close-panel-button").addEventListener("click", closePanel);
 $("#edge-demo-button").addEventListener("click", () => {
   if (state.showFloatingTab && !state.collapsed && !state.hiddenToTray) { state.side = "right"; state.edgeOffset = null; positionDock(bounds().maxX, dock.offsetTop); }
   closePanel();
-  notify(state.showFloatingTab ? "ADB 和数量区域仅拖动；点击末端“展开”按钮打开列表。" : "已隐藏到模拟托盘，点击任务栏中的 ADB Dock 图标重新打开。");
+  notify(state.showFloatingTab ? "点击设备图标直达操作，或用“展开”查看全部设备。" : "已隐藏到模拟托盘，点击任务栏中的 ADB Dock 图标重新打开。");
 });
 $("#settings-button").addEventListener("click", showSettings);
 $("#floating-tab-button").addEventListener("click", () => setShowFloatingTab(!state.showFloatingTab));
@@ -775,7 +795,7 @@ $("#tray-reopen-button").addEventListener("click", () => {
 $$("[data-scenario]").forEach((button) => button.addEventListener("click", () => changeScenario(button.dataset.scenario)));
 $("#dialog-close").addEventListener("click", closeDialog);
 dialog.addEventListener("close", () => {
-  if (dialogReturnFocus?.isConnected && (!dock.hidden || (!devicePreview.hidden && devicePreview.contains(dialogReturnFocus)))) dialogReturnFocus.focus({ preventScroll: true });
+  if (dialogReturnFocus?.isConnected && !dock.hidden) dialogReturnFocus.focus({ preventScroll: true });
   dialogReturnFocus = null;
   refreshAutoCollapse(true);
 });

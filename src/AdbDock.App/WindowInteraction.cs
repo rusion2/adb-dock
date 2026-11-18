@@ -30,9 +30,8 @@ public partial class MainWindow
     private void InitializeInteraction()
     {
         leaveTimer.Tick += (_, _) => EvaluateAutoCollapse(Desktop.Cursor, Environment.TickCount64);
-        previewTimer.Tick += (_, _) => EvaluatePreviewLeave(Desktop.Cursor, Environment.TickCount64);
         IsVisibleChanged += (_, _) => UpdateLeaveTimer();
-        MouseEnter += (_, _) => { outsideSince = null; previewOutsideSince = null; };
+        MouseEnter += (_, _) => outsideSince = null;
         PreviewMouseDown += (_, _) => keyboardNavigation = false;
         SourceInitialized += (_, _) =>
         {
@@ -43,7 +42,8 @@ public partial class MainWindow
 
     private void UpdateLeaveTimer()
     {
-        leaveTimer.IsEnabled = loaded && IsVisible && !exiting && !collapsed && settings.ShowFloatingTab && settings.AutoCollapse;
+        leaveTimer.IsEnabled = loaded && IsVisible && !exiting && !collapsed && settings.ShowFloatingTab
+            && settings.AutoCollapse && settings.HasConnectedDevice;
         if (!leaveTimer.IsEnabled) outsideSince = null;
     }
 
@@ -93,12 +93,30 @@ public partial class MainWindow
         Desktop.Clamp(this);
         UpdateView();
     }
-    private void FitExpanded()
+    private bool FitExpanded()
     {
         var scale = Desktop.Scale(this);
         var work = Desktop.WorkArea(this);
-        Width = Math.Max(240, Math.Min(380, work.Width / scale - 16));
-        Height = Math.Max(240, Math.Min(552, work.Height / scale - 16));
+        var width = Math.Max(240, Math.Min(380, work.Width / scale - 16));
+        var height = Math.Max(240, Math.Min(model.Selected is null ? 552 : 352, work.Height / scale - 16));
+        if (Width == width && Height == height) return false;
+        Width = width;
+        Height = height;
+        return true;
+    }
+
+    private void ResizeExpanded()
+    {
+        var bounds = Desktop.Bounds(this);
+        if (!FitExpanded()) return;
+        var scale = Desktop.Scale(this);
+        var work = Desktop.WorkArea(this);
+        var width = (int)Math.Round(Width * scale);
+        var height = (int)Math.Round(Height * scale);
+        var top = settings.Side == DockSide.Bottom && Math.Abs(bounds.Bottom - work.Bottom) <= 1
+            ? work.Bottom - height : bounds.Top;
+        Desktop.Place(this, Math.Clamp(bounds.Left, work.Left, Math.Max(work.Left, work.Right - width)),
+            Math.Clamp(top, work.Top, Math.Max(work.Top, work.Bottom - height)), width, height);
     }
 
     private void RenderEdge()
@@ -115,7 +133,7 @@ public partial class MainWindow
         if (model.EdgeDevices.Count > capacity) capacity = Math.Min(5, slots - 1);
         var rows = model.EdgeDevices.Take(capacity).ToArray();
         var extra = model.EdgeDevices.Count - rows.Length;
-        var signature = $"{settings.Side}:{capacity}:{model.AdbAvailable}:{model.OnlineCount}:{model.TotalCount}:{model.ShortStatus}:" + string.Join("|", rows.Select(r => r.Tooltip)) + ":" + extra;
+        var signature = $"{settings.Side}:{capacity}:{model.AdbAvailable}:{model.OnlineCount}:{model.TotalCount}:{model.ShortStatus}:" + string.Join("|", rows.Select(r => $"{r.Tooltip}/{r.EdgeLabel}")) + ":" + extra;
         if (signature == edgeSignature) return;
         edgeSignature = signature;
         var old = Desktop.Bounds(this);
@@ -134,7 +152,14 @@ public partial class MainWindow
         foreach (var row in rows)
         {
             var phone = new Grid { Width = 23, Height = 27 };
-            phone.Children.Add(new Rectangle { Width = 12, Height = 21, RadiusX = 2.5, RadiusY = 2.5, Stroke = row.Tone, StrokeThickness = 1.5 });
+            if (row.EdgeLabel is { } label)
+            {
+                var name = new TextBlock { Text = label, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = row.Tone, TextWrapping = TextWrapping.NoWrap };
+                System.Windows.Automation.AutomationProperties.SetAutomationId(name, "EdgeDeviceLabel");
+                phone.Children.Add(new Viewbox { Width = 17, Height = 17, StretchDirection = StretchDirection.DownOnly,
+                    Margin = new Thickness(0, 0, 4, 3), Child = name });
+            }
+            else phone.Children.Add(new Rectangle { Width = 12, Height = 21, RadiusX = 2.5, RadiusY = 2.5, Stroke = row.Tone, StrokeThickness = 1.5 });
             phone.Children.Add(new TextBlock { Text = row.Marker, Foreground = row.Tone, Background = row.Tint, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom });
             var button = new Button { Content = phone, Background = row.Tint, BorderBrush = row.Tint, Width = 34, Height = 34, Padding = new Thickness(0), Margin = horizontal ? new Thickness(0, 0, 5, 0) : new Thickness(0, 0, 0, 5), DataContext = row };
             System.Windows.Automation.AutomationProperties.SetName(button, row.Tooltip);
@@ -142,7 +167,7 @@ public partial class MainWindow
             button.ToolTip = new ToolTip { Content = row.Tooltip, Placement = settings.Side switch { DockSide.Left => PlacementMode.Right, DockSide.Top => PlacementMode.Bottom, DockSide.Bottom => PlacementMode.Top, _ => PlacementMode.Left } };
             ToolTipService.SetInitialShowDelay(button, 0);
             ToolTipService.SetShowDuration(button, 20000);
-            AttachPreviewGesture(button, row);
+            AttachEdgeDeviceGesture(button, row.Serial);
             EdgeDevices.Children.Add(button);
         }
         if (extra > 0 || rows.Length == 0)
@@ -159,6 +184,31 @@ public partial class MainWindow
         ApplyEdgePosition(old.Left + old.Width / 2, old.Top + old.Height / 2, work);
     }
 
+    private void AttachEdgeDeviceGesture(Button button, string serial)
+    {
+        void OpenTarget()
+        {
+            if (!collapsed || pressStart is not null || interactionDepth != 0 || exiting) return;
+            var target = model.Devices.FirstOrDefault(row => row.Serial == serial);
+            if (target is not null) OpenDevice(target);
+        }
+
+        NativePoint? pressedAt = null;
+        button.Click += (_, _) => OpenTarget();
+        button.PreviewMouseLeftButtonDown += (_, e) => pressedAt = EventPoint(e);
+        button.LostMouseCapture += (_, _) => pressedAt = null;
+        button.PreviewMouseMove += (_, e) =>
+        {
+            if (pressedAt is not { } start || e.LeftButton != MouseButtonState.Pressed) return;
+            var current = EventPoint(e);
+            var left = start.X - current.X;
+            if (left < 12 * Desktop.Scale(this) || left < Math.Abs(start.Y - current.Y)) return;
+            pressedAt = null;
+            button.ReleaseMouseCapture();
+            OpenTarget();
+        };
+    }
+
     private void ApplyEdgePosition(int centerX, int centerY, NativeRect work)
     {
         var scale = Desktop.Scale(this);
@@ -167,7 +217,6 @@ public partial class MainWindow
         var x = settings.Side == DockSide.Left ? work.Left : settings.Side == DockSide.Right ? work.Right - width : Math.Clamp(centerX - width / 2, work.Left + 8, Math.Max(work.Left + 8, work.Right - width - 8));
         var y = settings.Side == DockSide.Top ? work.Top : settings.Side == DockSide.Bottom ? work.Bottom - height : Math.Clamp(centerY - height / 2, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - height - 8));
         Desktop.Place(this, x, y, width, height);
-        if (devicePreview is { } preview) PlacePreview(preview);
     }
 
     private void CollapsePanel()
@@ -193,7 +242,6 @@ public partial class MainWindow
     private void ExpandPanel(bool focus)
     {
         if (pressStart is not null) return;
-        devicePreview?.Close();
         outsideSince = null;
         if (collapsed)
         {
@@ -306,7 +354,7 @@ public partial class MainWindow
         pressSide = settings.Side;
         draggingEdge = false;
         EdgeSummary.Focus();
-        if (!EdgeSummary.CaptureMouse()) pressStart = null;
+        if (!EdgeSummary.CaptureMouse()) FinishPress(true);
     }
     private void SummaryMouseMove(object sender, MouseEventArgs e)
     {
@@ -322,7 +370,6 @@ public partial class MainWindow
             if (Math.Abs(dx) < SystemParameters.MinimumHorizontalDragDistance * scale &&
                 Math.Abs(dy) < SystemParameters.MinimumVerticalDragDistance * scale) return;
             draggingEdge = true;
-            devicePreview?.Close();
             Opacity = .93;
             ToolTipService.SetIsEnabled(EdgePanel, false);
         }
@@ -359,6 +406,11 @@ public partial class MainWindow
             RenderEdge();
             Desktop.Place(this, pressBounds.Left, pressBounds.Top);
             Desktop.Clamp(this);
+        }
+        else
+        {
+            // Device changes received while the summary held the mouse were deferred.
+            RenderEdge();
         }
         if (wasDragging) SaveSettings();
     }

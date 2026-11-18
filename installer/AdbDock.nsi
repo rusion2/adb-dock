@@ -29,6 +29,9 @@ ManifestDPIAware true
 !ifndef FILE_MANIFEST
   !error "FILE_MANIFEST is required"
 !endif
+!ifndef PAYLOAD_INVENTORY
+  !error "PAYLOAD_INVENTORY is required"
+!endif
 !ifndef APP_ICON
   !define APP_ICON "${__FILEDIR__}\..\src\AdbDock.App\Assets\App.ico"
 !endif
@@ -90,6 +93,7 @@ Var StartupApproved
 !define MUI_WELCOMEPAGE_TITLE "ADB Dock ${APP_VERSION}"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\AdbDock.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "$(LaunchApp)"
+!define MUI_FINISHPAGE_TEXT "$(FinishSetupText)"
 !define MUI_LANGDLL_REGISTRY_ROOT HKCU
 !define MUI_LANGDLL_REGISTRY_KEY "${APP_REG_KEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
@@ -118,6 +122,8 @@ LangString DesktopDescription ${LANG_SIMPCHINESE} "在当前用户桌面添加 A
 LangString DesktopDescription ${LANG_ENGLISH} "Add an ADB Dock shortcut to this user's desktop."
 LangString LaunchApp ${LANG_SIMPCHINESE} "立即启动 ADB Dock"
 LangString LaunchApp ${LANG_ENGLISH} "Launch ADB Dock now"
+LangString FinishSetupText ${LANG_SIMPCHINESE} "ADB Dock 已安装。$\r$\n$\r$\n连接 Android 设备需准备 Android SDK Platform-Tools（ADB），投屏另需 scrcpy。首次启动可按应用内的步骤配置。"
+LangString FinishSetupText ${LANG_ENGLISH} "ADB Dock is installed.$\r$\n$\r$\nDevice connection requires Android SDK Platform-Tools (ADB). Screen mirroring also needs scrcpy. Follow the in-app setup steps on first launch."
 LangString NeedX64 ${LANG_SIMPCHINESE} "ADB Dock 需要 64 位 Windows。"
 LangString NeedX64 ${LANG_ENGLISH} "ADB Dock requires 64-bit Windows."
 LangString AppRunning ${LANG_SIMPCHINESE} "ADB Dock 正在运行。请从程序托盘或右键菜单选择退出，然后重试。安装程序不会强制结束你的程序。"
@@ -138,16 +144,18 @@ LangString UninstallTitle ${LANG_ENGLISH} "Uninstall ADB Dock"
 Section "$(CoreName)" SecCore
   SectionIn RO
   Call EnsureApplicationClosed
+  Call PreparePayload
   ClearErrors
   SetOutPath "$INSTDIR"
   SetOverwrite on
   File /r "${PAYLOAD_DIR}\*"
   IfErrors install_failed
+  Call RecordPayload
+  ClearErrors
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "${LINKS_ROOT}"
   CreateShortcut "${LINKS_ROOT}\ADB Dock.lnk" "$INSTDIR\AdbDock.exe" "" "$INSTDIR\AdbDock.exe"
   CreateShortcut "${LINKS_ROOT}\Uninstall ADB Dock.lnk" "$INSTDIR\Uninstall.exe"
-  WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${APP_REG_KEY}" "Version" "${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "ADB Dock ${APP_VERSION}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "${APP_VERSION}"
@@ -212,7 +220,12 @@ Section "-ApplyOptions"
   IntOp $0 $0 & ${SF_SELECTED}
   ${If} $0 == 0
     ReadRegStr $0 HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
+    ReadRegStr $1 HKCU "${APP_REG_KEY}" "InstallDir"
+    ${If} $1 == ""
+      StrCpy $1 "$INSTDIR"
+    ${EndIf}
     ${If} $0 == '$\"$INSTDIR\AdbDock.exe$\"'
+    ${OrIf} $0 == '$\"$1\AdbDock.exe$\"'
       ClearErrors
       DeleteRegValue HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
       ${If} ${Errors}
@@ -222,12 +235,20 @@ Section "-ApplyOptions"
       ${EndIf}
     ${EndIf}
   ${EndIf}
+  ClearErrors
+  WriteRegStr HKCU "${APP_REG_KEY}" "InstallDir" "$INSTDIR"
+  ${If} ${Errors}
+    MessageBox MB_OK|MB_ICONSTOP "$(InstallFailed)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
   System::Call 'kernel32::CloseHandle(p $InstallGuard)'
   StrCpy $InstallGuard 0
 SectionEnd
 
 Section "Uninstall"
   Call un.EnsureApplicationClosed
+  Call un.PreparePayload
   StrCpy $PayloadDeleteFailed 0
   !insertmacro RemovePayload
   ${If} $PayloadDeleteFailed != 0
@@ -242,6 +263,8 @@ Section "Uninstall"
   SetErrorLevel 2
   Abort
 uninstall_files_done:
+  DeleteRegValue HKCU "${APP_REG_KEY}\Payloads" "$INSTDIR"
+  DeleteRegKey /ifempty HKCU "${APP_REG_KEY}\Payloads"
   ReadRegStr $0 HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
   ${If} $0 == '$\"$INSTDIR\AdbDock.exe$\"'
     DeleteRegValue HKCU "${RUN_REG_KEY}" "${RUN_VALUE}"
@@ -263,6 +286,8 @@ uninstall_files_done:
   ${EndIf}
   ; Nonrecursive removal preserves settings and unrelated user-added files.
   RMDir "$INSTDIR"
+  System::Call 'kernel32::CloseHandle(p $InstallGuard)'
+  StrCpy $InstallGuard 0
   ClearErrors
 SectionEnd
 
@@ -323,9 +348,7 @@ Function ${Prefix}EnsureApplicationClosed
   StrCpy $2 0
 !endif
 check_again:
-!if "${Prefix}" == ""
-  ; Reserve the same singleton name until all setup sections finish. A login
-  ; launch during file replacement will see an existing instance and exit.
+  ; Keep the singleton name reserved throughout file replacement or removal.
   System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0 ?e'
   Pop $1
   ${If} $0 != 0
@@ -336,17 +359,6 @@ check_again:
     System::Call 'kernel32::CloseHandle(p r0)'
     Goto application_running
   ${EndIf}
-!else
-  System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${INSTANCE_MUTEX_PREFIX}$CurrentUserSid") p.r0 ?e'
-  Pop $1
-  ${If} $0 != 0
-    System::Call 'kernel32::CloseHandle(p r0)'
-    Goto application_running
-  ${EndIf}
-  ${If} $1 == 2
-    Return
-  ${EndIf}
-!endif
   ${If} $1 != 5
     MessageBox MB_OK|MB_ICONSTOP "$(CheckFailed)" /SD IDOK
     SetErrorLevel 2
@@ -392,6 +404,26 @@ FunctionEnd
 !macroend
 !insertmacro DefineStateFunctions ""
 !insertmacro DefineStateFunctions "un."
+
+!macro DefinePayloadPreparation FunctionName Mode FailureMessage
+Function ${FunctionName}
+!if "${Mode}" != "Record"
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\PreparePayload.ps1 "${__FILEDIR__}\PreparePayload.ps1"
+  File /oname=$PLUGINSDIR\payload-inventory.txt "${PAYLOAD_INVENTORY}"
+!endif
+  nsExec::ExecToLog '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\PreparePayload.ps1" -Mode ${Mode} -InstallDirectory "$INSTDIR" -Inventory "$PLUGINSDIR\payload-inventory.txt" -RegistryKey "${APP_REG_KEY}\Payloads"'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_OK|MB_ICONSTOP "$(${FailureMessage})" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro DefinePayloadPreparation PreparePayload Install InstallFailed
+!insertmacro DefinePayloadPreparation RecordPayload Record InstallFailed
+!insertmacro DefinePayloadPreparation un.PreparePayload Uninstall UninstallFailed
 
 ; NSIS is a 32-bit process on 64-bit Windows. Use the native Windows PowerShell
 ; host so it can inspect the 64-bit installed app, including a hidden tray window.
@@ -464,5 +496,4 @@ Function un.onInit
   SetShellVarContext current
   SetRegView 64
   !insertmacro MUI_UNGETLANGUAGE
-  Call un.EnsureApplicationClosed
 FunctionEnd

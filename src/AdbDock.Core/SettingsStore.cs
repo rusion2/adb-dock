@@ -33,6 +33,7 @@ public sealed class SettingsStore
             }
             settings.AdbPath ??= "";
             settings.ScrcpyPath ??= "";
+            settings.DeviceAliases ??= new(StringComparer.Ordinal);
             if (string.IsNullOrWhiteSpace(settings.ScreenshotDirectory)) settings.ScreenshotDirectory = new AppSettings().ScreenshotDirectory;
             if (!Enum.IsDefined(settings.Side)) settings.Side = DockSide.None;
             if (settings.AutoCollapseDelaySeconds is < AppSettings.MinimumAutoCollapseDelaySeconds or > AppSettings.MaximumAutoCollapseDelaySeconds)

@@ -41,9 +41,11 @@ public sealed class AppSettings
     public bool Topmost { get; set; } = true;
     public bool ShowFloatingTab { get; set; } = true;
     public bool AutoCollapse { get; set; } = true;
+    public bool HasConnectedDevice { get; set; }
     public int AutoCollapseDelaySeconds { get; set; } = DefaultAutoCollapseDelaySeconds;
     public bool AutoStart { get; set; }
     public DockSide Side { get; set; }
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
+    public Dictionary<string, string> DeviceAliases { get; set; } = new(StringComparer.Ordinal);
 }

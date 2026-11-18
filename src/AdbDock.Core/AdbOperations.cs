@@ -10,7 +10,6 @@ public sealed partial class AdbOperations : IAsyncDisposable
     private readonly string _adbPath;
     private readonly object _sync = new();
     private readonly Dictionary<string, DeviceQueue> _devices = new(StringComparer.Ordinal);
-    private readonly List<CancellationTokenSource> _generations = [];
     private readonly CancellationTokenSource _shutdown = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _activeOperations;
@@ -27,7 +26,7 @@ public sealed partial class AdbOperations : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         return RunShortAsync(serial, token => ProcessRunner.RunBinaryToFileAsync(_adbPath,
-            ["-s", serial, "exec-out", "screencap", "-p"], destination, ShortTimeout, token), cancellationToken);
+            ["-s", serial, "exec-out", "screencap", "-p"], destination, ShortTimeout, token, PngScreenshot.Validate), cancellationToken);
     }
 
     public Task InstallAsync(string serial, string apkPath, CancellationToken cancellationToken = default)
@@ -99,7 +98,7 @@ public sealed partial class AdbOperations : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(serials);
         var online = serials.ToHashSet(StringComparer.Ordinal);
         if (online.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("设备序列号不能为空。", nameof(serials));
-        List<CancellationTokenSource> disconnected = [];
+        List<DeviceConnection> disconnected = [];
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -109,20 +108,17 @@ public sealed partial class AdbOperations : IAsyncDisposable
                 {
                     disconnected.Add(device.Generation);
                     device.Generation = null;
+                    RemoveIdleDevice(serial, device);
                 }
             }
             foreach (var serial in online)
             {
                 if (!_devices.TryGetValue(serial, out var device))
                     _devices.Add(serial, device = new DeviceQueue());
-                if (device.Generation is null)
-                {
-                    device.Generation = new CancellationTokenSource();
-                    _generations.Add(device.Generation);
-                }
+                device.Generation ??= new DeviceConnection();
             }
         }
-        foreach (var source in disconnected) CancelSafely(source);
+        foreach (var connection in disconnected) connection.Disconnect();
     }
 
     public Task ReadLogcatAsync(string serial, Action<string> onLine, CancellationToken cancellationToken = default)
@@ -198,19 +194,20 @@ public sealed partial class AdbOperations : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         DeviceQueue device;
-        CancellationToken generation;
+        DeviceConnection generation;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!_devices.TryGetValue(serial, out device!) || device.Generation is null)
                 throw new InvalidOperationException("设备不在线，请等待设备连接并授权后再操作。");
-            generation = device.Generation.Token;
+            generation = device.Generation.Retain();
+            device.ActiveOperations++;
             _activeOperations++;
         }
         var acquired = false;
         try
         {
-            using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation, _shutdown.Token);
+            using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation.Token, _shutdown.Token);
             if (queued)
             {
                 await device.Gate.WaitAsync(operation.Token).ConfigureAwait(false);
@@ -224,11 +221,21 @@ public sealed partial class AdbOperations : IAsyncDisposable
         finally
         {
             if (acquired) device.Gate.Release();
+            generation.Release();
             lock (_sync)
             {
+                device.ActiveOperations--;
+                RemoveIdleDevice(serial, device);
                 if (--_activeOperations == 0 && _disposed) _drained.TrySetResult();
             }
         }
+    }
+
+    private void RemoveIdleDevice(string serial, DeviceQueue device)
+    {
+        if (device.Generation is not null || device.ActiveOperations != 0) return;
+        _devices.Remove(serial);
+        device.Gate.Dispose();
     }
 
     public ValueTask DisposeAsync()
@@ -252,8 +259,15 @@ public sealed partial class AdbOperations : IAsyncDisposable
         {
             CancelSafely(_shutdown);
             await _drained.Task.ConfigureAwait(false);
-            foreach (var source in _generations) source.Dispose();
-            foreach (var device in _devices.Values) device.Gate.Dispose();
+            lock (_sync)
+            {
+                foreach (var device in _devices.Values)
+                {
+                    device.Generation?.Release();
+                    device.Gate.Dispose();
+                }
+                _devices.Clear();
+            }
             _shutdown.Dispose();
             completion.TrySetResult();
         }
@@ -276,6 +290,7 @@ public sealed partial class AdbOperations : IAsyncDisposable
     private sealed class DeviceQueue
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
-        public CancellationTokenSource? Generation { get; set; }
+        public DeviceConnection? Generation { get; set; }
+        public int ActiveOperations { get; set; }
     }
 }

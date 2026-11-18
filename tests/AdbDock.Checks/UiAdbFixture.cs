@@ -27,15 +27,40 @@ public static class UiAdbFixture
         }
         if (args[0] == "track-devices")
         {
+            var restart = snapshot + ".restart-tracker";
+            while (File.Exists(restart)) await Task.Delay(50);
             string? previous = null;
             while (true)
             {
+                if (File.Exists(restart)) return 1;
                 var current = await ReadSnapshotAsync(snapshot);
                 if (current != previous) { Console.WriteLine(current); Console.WriteLine(); await Console.Out.FlushAsync(); previous = current; }
                 await Task.Delay(200);
             }
         }
         if (args[0] != "-s" || args.Length < 3) return null;
+        if (args is ["-s", var serial, "exec-out", "screencap", "-p"])
+        {
+            File.AppendAllText(snapshot + ".screenshots", serial + Environment.NewLine);
+            await using var stdout = Console.OpenStandardOutput();
+            await stdout.WriteAsync(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAABElEQVR4nGP4TRdsqgAAAA1JREFUz8vF8K+BQQsADjoCvxUYwlsAAAAASUVORK5CYII="));
+            return 0;
+        }
+        if (args is ["-s", "UI-C", "install", "-r", var apk] && apk == snapshot + ".apk")
+        {
+            File.Create(apk + ".started").Dispose();
+            while (File.Exists(apk)) await Task.Delay(50);
+            Console.WriteLine("Success");
+            return 0;
+        }
+        if (args is ["-s", "UI-C", "--window-title", "ADB Dock · UI-C"])
+        {
+            File.WriteAllText(snapshot + ".mirror-pid", Environment.ProcessId.ToString());
+            Console.WriteLine("INFO: Renderer: test");
+            await Console.Out.FlushAsync();
+            await Task.Delay(Timeout.InfiniteTimeSpan);
+            return 0;
+        }
         if (args[2] == "shell" && args.Length >= 5 && args[3] == "getprop")
         {
             Console.WriteLine(args[4] switch { "ro.product.model" => "UI Fixture Phone " + args[1], "ro.product.manufacturer" => "Test Only", "ro.build.version.release" => "15", "ro.build.version.sdk" => "35", _ => "" });
@@ -64,7 +89,7 @@ public static class UiAdbFixture
         {
             for (var i = 0; ; i++) { Console.WriteLine($"11-17 15:00:00.000 100 100 I UiFixture: {args[1]} test log {i}"); await Console.Out.FlushAsync(); await Task.Delay(150); }
         }
-        Console.Error.WriteLine("UI fixture refuses device writes and mirror startup.");
+        Console.Error.WriteLine("Unsupported UI fixture command.");
         return 1;
     }
 
