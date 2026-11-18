@@ -234,6 +234,14 @@ try {
     foreach ($document in (Get-ChildItem -LiteralPath $projectRoot -Filter '*.md' -File)) {
         Copy-Item -LiteralPath $document.FullName -Destination (Join-Path $payload $document.Name) -Force
     }
+    $readmeAssets = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'docs\images') -File)
+    $readmeAssets += Get-Item -LiteralPath (Join-Path $projectRoot 'src\AdbDock.App\Assets\AppIcon.svg')
+    foreach ($asset in $readmeAssets) {
+        $relative = $asset.FullName.Substring($projectRoot.Length + 1)
+        $destination = Join-Path $payload $relative
+        New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
+        Copy-Item -LiteralPath $asset.FullName -Destination $destination -Force
+    }
     foreach ($license in @('LICENSE.txt', 'ThirdPartyNotices.txt')) {
         $licenseDestination = Join-Path $payload $license
         if (-not (Test-Path -LiteralPath $licenseDestination -PathType Leaf)) {

@@ -117,6 +117,14 @@ try {
     foreach ($document in (Get-ChildItem -LiteralPath $projectRoot -Filter '*.md' -File)) {
         Copy-Item -LiteralPath $document.FullName -Destination (Join-Path $publishDirectory $document.Name)
     }
+    $readmeAssets = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'docs\images') -File)
+    $readmeAssets += Get-Item -LiteralPath (Join-Path $projectRoot 'src\AdbDock.App\Assets\AppIcon.svg')
+    foreach ($asset in $readmeAssets) {
+        $relative = $asset.FullName.Substring($projectRoot.Length + 1)
+        $destination = Join-Path $publishDirectory $relative
+        New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force | Out-Null
+        Copy-Item -LiteralPath $asset.FullName -Destination $destination -Force
+    }
     $runtimeNote = if ($SelfContained) { 'Includes the .NET runtime; no separate .NET installation is needed.' } else { 'Requires the Windows x64 .NET 10 Desktop Runtime (not just the base .NET Runtime).' }
     $releaseInfo = [ordered]@{
         application = 'ADB Dock'

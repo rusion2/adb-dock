@@ -1,134 +1,221 @@
-# ADB Dock
+<p align="center">
+  <img src="src/AdbDock.App/Assets/AppIcon.svg" width="76" height="76" alt="ADB Dock 图标">
+</p>
 
-V0.1.2 更新了托盘和程序图标，并改为点击展开后常驻、拖到屏幕边缘松开再收起。安装版默认勾选“登录 Windows 后自动启动 ADB Dock”，可在安装时取消，或在应用设置中关闭。安装版自带 .NET 10 运行时，无需另行安装 .NET。安装前请从托盘退出已有 ADB Dock。
+<h1 align="center">ADB Dock</h1>
 
-Windows 上的 Android 悬浮设备助手，使用 C#、.NET 10 和 WPF。设备面板支持四边停靠、点击展开、托盘常驻，以及投屏、截图、APK 安装、基础按键、设备信息和 Logcat。`index.html` 是保留的交互原型，真实设备功能在原生客户端中运行。
+<p align="center">把 Android 设备状态和常用操作，放到 Windows 桌面边缘。</p>
 
-## 使用安装版
+<p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-运行名称含 `win-x64-Setup` 的安装程序即可为当前用户安装，默认目录为 `%LOCALAPPDATA%\Programs\AdbDock`，无需单独安装 .NET。安装器提供开始菜单入口及可选桌面快捷方式。
+<p align="center"><code>Windows x64</code> · <code>.NET 10</code> · <code>WPF</code> · <code>v0.1.2</code></p>
 
-安装向导中“登录 Windows 时启动”默认勾选；取消勾选即可关闭。安装后也可在应用设置中修改。此功能只在当前用户登录 Windows 时启动一次，不会在程序崩溃或主动退出后自动重启。需要停止常驻时，从托盘选择“退出 ADB Dock”。
+<p align="center">
+  <a href="#quick-start">快速开始</a> · <a href="#preview">界面预览</a> · <a href="#usage">功能用法</a> · <a href="#development">源码构建</a> · <a href="#packaging">打包发布</a>
+</p>
 
-可以从 Windows 的“已安装的应用”或开始菜单中的卸载入口卸载。卸载会移除该安装创建的程序文件、快捷方式和启动项，保留 `%LOCALAPPDATA%\AdbDock` 中的用户设置与日志；安装目录中后加入的其他文件也会保留。更新或卸载前先从托盘退出正在运行的应用。
+ADB Dock 是一个本地运行的 Windows Android 设备助手：查看设备是否在线，选择目标设备，再进行投屏、截图、安装 APK、按键控制或日志排查。展开时是设备面板，收起时是贴边状态条，无需账号或后端服务。
 
-设置窗口底部显示当前程序版本号，升级后可在这里确认。
+## 主要功能
 
-## 使用免安装版
+- **设备状态一眼可见**：区分在线、未授权、离线、无设备和 ADB 异常，统计在线数与发现总数。
+- **四边停靠与托盘常驻**：点击展开后保持显示，未固定时拖到边缘松开再收起；固定按钮有独立选中状态。
+- **六项常用操作**：scrcpy 投屏、PNG 截图、APK 安装、Home / 返回 / 最近任务 / 亮屏、设备信息和 Logcat。操作始终绑定所选序列号。
+- **正则日志筛选**：缓存最近最多 20,000 行，支持筛选、清除、暂停显示、复制和导出。
+- **整机性能监控**：在设备信息中查看 CPU、内存、电量和电池温度，支持手动开始、暂停与断连停止。
+- **当前用户安装**：安装版自带 .NET 运行时，支持登录启动与卸载；不需要管理员权限。
 
-完整解压发布 ZIP，运行其中的 `AdbDock.exe`。默认发布版需要 **Windows x64 .NET 10 Desktop Runtime**；仅安装基础 .NET Runtime 不够。名称含 `self-contained` 的自包含版已带运行时。
+<a id="preview"></a>
+## 界面预览
 
-首次启动后，在右上角设置中指定现有 `adb.exe` 和 `scrcpy.exe`，点击“检测工具”检查版本。也可以将工具目录加入系统 `PATH`。scrcpy 仅为投屏所需，缺少它不会妨碍设备列表和其他 ADB 操作。
+以下为原生 WPF 界面，设备、日志和指标均来自测试数据。应用界面目前为中文；本仓库提供中英文文档。
 
-工具查找顺序是“设置中的指定路径 → PATH → 程序目录下的工具”。指定了无效路径时会明确报错，不会自动改用另一份工具。若需要将工具与程序放在一起，目录结构为：
+<p align="center">
+  <img src="docs/images/device-panel.png" width="320" alt="设备面板：在线数量、设备列表与状态">
+  <img src="docs/images/device-actions.png" width="320" alt="设备操作页：六项操作与目标序列号">
+</p>
+
+<p align="center">
+  <img src="docs/images/logcat.png" width="320" alt="Logcat 日志正则筛选">
+  <img src="docs/images/performance.png" width="320" alt="设备信息与整机性能监控">
+</p>
+
+<p align="center">
+  <img src="docs/images/docked-bar.png" width="266" alt="顶部贴边状态条与点击展开按钮">
+</p>
+
+<a id="quick-start"></a>
+## 快速开始
+
+当前仓库提供源码与打包脚本，尚未发布 GitHub Release。可按下文的[源码构建](#development)运行，或通过[打包脚本](#packaging)生成安装文件；发布入口为 [Releases](https://github.com/rusion2/adb-dock/releases)。
+
+- **安装版**：运行生成的 `*win-x64-Setup*.exe`。默认安装到 `%LOCALAPPDATA%\Programs\AdbDock`，自带 .NET 10 运行时，提供开始菜单和卸载入口，桌面快捷方式可选。
+- **便携版**：完整解压 ZIP 后运行 `AdbDock.exe`。默认便携版需要 **Windows x64 .NET 10 Desktop Runtime**；`self-contained` 版本已包含运行时。
+
+安装版首次安装默认勾选“登录 Windows 后自动启动”，可在向导或应用设置中关闭，升级保留此前的关闭选择。更新或卸载前，先从托盘退出旧版。
+
+### 配置 ADB 与 scrcpy
+
+本项目不随附这些工具：
+
+1. 准备官方 [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools)。
+2. 如需投屏，准备官方 [scrcpy](https://github.com/Genymobile/scrcpy) 完整发行目录。
+3. 打开右上角设置，指定 `adb.exe` / `scrcpy.exe`，点击“检测工具”；也可将工具目录加入 `PATH`。
+
+查找顺序为：**设置中的指定路径 → 系统 PATH → 程序目录下的随附工具**。指定路径无效时会直接提示，不会静默换用其他版本。缺少 scrcpy 只影响投屏。
+
+<details>
+<summary>将工具放在程序目录中</summary>
 
 ```text
 AdbDock.exe
 AdbDock.dll
-AdbDock.Core.dll
 ...其他发布文件
 tools/
   platform-tools/
     adb.exe
-    ...完整官方 platform-tools 的 DLL、依赖与许可文件
+    ...官方发行目录中的 DLL、依赖与许可文件
   scrcpy/
     scrcpy.exe
-    ...完整官方 scrcpy 的服务端、DLL、依赖与许可文件
+    ...服务端、DLL、依赖与许可文件
 ```
 
-本项目的发布脚本不下载或随附 ADB/scrcpy。自行加入工具时，应保留各自完整发行目录及许可、声明文件；不能只复制可执行文件。
+保留工具的完整发行文件，不要只复制可执行文件。
 
-连接手机后开启 USB 调试，并在手机上允许此电脑。点击在线设备打开操作页；未授权、离线设备只显示指引。安装 APK 和按键会修改设备状态，使用前确认操作页中的序列号。已有 ADB 网络连接可直接显示，暂不提供无线配对向导。
+</details>
 
-设备列表每行的截图按钮可直接保存该设备的截图，不会进入另一台设备的操作页；未授权和离线设备的截图按钮不可用。窗口底部的“结果”可查看、复制或导出本次运行中最近 20 条操作结果，成功截图还提供“打开最近截图”入口。设备自动刷新不会清空这些结果。
+### 连接设备
 
-“查看日志”支持正则筛选，输入 `error|fatal` 可匹配任一关键词，`(?i)error|fatal` 可忽略大小写。筛选应用于保留的最近日志，清空表达式后恢复全部；复制和导出以当前显示内容为准。表达式无效或匹配耗时过长时会提示，不中断日志读取。
+在 Android 开发者选项中开启 USB 调试，通过数据线连接电脑，并在手机上允许此电脑调试。点击在线设备进入操作页；未授权和离线设备只提供状态指引。已建立的 ADB 网络连接也会显示，当前不提供无线配对向导。
 
-日志缓存保留最近最多 20,000 行，并限制总文本大小；筛选、暂停和清空表达式都在当前窗口内操作。设备信息中的“性能监控”可手动开始或暂停，约每 2 秒读取设备整体 CPU、内存、电量和电池温度；CPU 需要两个样本才显示占用，关闭窗口或断连后停止采样。
+安装 APK 和发送按键会作用于所选设备，执行前请确认页面中的序列号。
 
-窗口标题空白处可拖动；拖到屏幕任意一边并松开，卡片会收成贴边浮窗。在屏幕中间松开则保持展开。点击贴边箭头或 ADB/数量区才展开，展开后保持显示，鼠标离开或切换窗口都不会收起。概况区长按约 350ms 可拖动贴边浮窗，聚焦后方向键可切换停靠边；仍可点击标题栏或托盘中的收起入口手动收起。关闭窗口会隐藏面板，通过托盘菜单重新显示或选择“退出 ADB Dock”。
+<a id="usage"></a>
+## 功能用法
 
-标题栏的固定按钮选中时显示紫色底色和边框，提示变为“取消固定展开”；此时拖到边缘也保持卡片。取消固定后，拖到边缘松开才收起；手动点击收起会取消固定。
+### 桌面交互
 
-配置和本地错误日志默认保存在 `%LOCALAPPDATA%\AdbDock`。免安装版和源码运行默认关闭登录启动；安装版以向导中的选择为准，默认开启。退出仅结束本程序拥有的客户端会话，不执行 `adb kill-server`。
+- **展开**：点击贴边箭头、ADB / 数量区或设备图标。悬停不会打开卡片；展开后，移开鼠标或切换窗口都不会收起。
+- **收起**：未固定时，拖动标题栏到屏幕任意边缘并松开；在工作区中间松开则保持卡片。也可点击标题栏或托盘的收起入口。
+- **固定**：选中后显示紫色底色和边框，此时拖到边缘也保持展开。取消固定不会立即收起；手动收起会取消固定。
+- **移动贴边条**：长按 ADB / 数量区约 350ms 拖动，或聚焦后用方向键切换停靠边。
+- **查看结果**：底部“结果”保留本次运行最近 20 条操作反馈，可复制、导出或打开最近截图；设备刷新不会清空结果。
+- **退出**：关闭主窗口会隐藏到托盘，通过“退出 ADB Dock”结束程序。设置窗口底部显示当前版本。
 
-## 从源码运行
+### 日志筛选
 
-需要 Windows 和 .NET 10 SDK。以下 PowerShell 命令从工程根目录执行，使用 Release 目录避免覆盖正在运行的 Debug 客户端：
+在“查看日志”的正则输入框中填写表达式，例如：
+
+```regex
+error|fatal
+```
+
+默认区分大小写。使用 `(?i)error|fatal` 可忽略大小写；清除表达式可恢复当前缓存中的全部日志。无效表达式保留上一次有效筛选，耗时过长的表达式会暂停筛选并提示修改。
+
+缓存最多保留 **20,000 行**，同时限制为约 **32 MiB 原始文本**，单行最多 8,000 字符。复制和导出以当前显示内容为准。**暂停显示期间会丢弃新到日志**，保留已有缓存；这不是持续落盘的日志录制器。
+
+### 性能监控
+
+进入“设备信息”，点击“开始监控”读取整机 CPU 占用、已用 / 总内存、电量和**电池温度**。CPU 需要两个有效样本；每次采样完成后等待约 2 秒再刷新。部分指标无法读取时会显示原因，其他指标继续更新。
+
+暂停、关闭窗口或设备断开会停止采样，重连后需手动开始。该窗口的复制与导出仅包含静态设备信息。
+
+### 配置与卸载
+
+配置和本地错误日志默认位于 `%LOCALAPPDATA%\AdbDock`。便携版与源码运行不会自行注册登录启动；安装版以安装向导和设置中的选择为准。登录启动不包含崩溃后自动拉起。
+
+从 Windows“已安装的应用”或开始菜单卸载。卸载移除本程序随附的文件、快捷方式和对应启动项，保留用户配置、日志、截图及安装目录中后来加入的无关文件。退出只结束本程序的客户端会话，不停止共享 ADB server。
+
+<a id="development"></a>
+## 从源码构建
+
+需要 **Windows x64、Git 和 .NET 10 SDK**。在 PowerShell 中执行：
 
 ```powershell
+git clone https://github.com/rusion2/adb-dock.git
+cd adb-dock
 dotnet build .\AdbDock.sln -c Release --disable-build-servers -m:1 -nr:false
 .\src\AdbDock.App\bin\Release\net10.0-windows\AdbDock.exe
 ```
 
-若受限终端中的 .NET 工作负载检查因权限失败，可在当前 PowerShell 会话先执行：
+### 自动检查
+
+完成构建后，运行无需第三方测试框架的核心检查：
 
 ```powershell
-$env:MSBuildEnableWorkloadResolver = 'false'
-$env:DOTNET_CLI_HOME = Join-Path $PWD '.build\dotnet-home'
-```
-
-SDK-only 自动检查使用独立假工具，不查找或操作实际 ADB 设备：
-
-```powershell
-dotnet build .\tests\AdbDock.Checks\AdbDock.Checks.csproj -c Release --disable-build-servers -m:1 -nr:false
 .\tests\AdbDock.Checks\bin\Release\net10.0\AdbDock.Checks.exe
 ```
 
-## 生成发布包
+<details>
+<summary>原生界面、自启动与安装流程检查</summary>
+
+UI 检查需要可交互的 Windows 桌面；先从托盘退出同一用户会话中其他 ADB Dock 实例。测试使用假设备和独立配置，不向真实手机安装应用或发送按键。
 
 ```powershell
-# 默认：构建、自动检查、发布需要 Desktop Runtime 的免安装版
-.\scripts\Publish.ps1
-
-# 自包含版：首次发布可能需要联网还原运行时包
-.\scripts\Publish.ps1 -SelfContained
-
-# 交互桌面中：额外运行原生 WPF 回归和发布目录启动检查
-.\scripts\Publish.ps1 -IncludeUiChecks
-```
-
-脚本生成新的 `artifacts\AdbDock-<版本>-win-x64-<类型>-<时间>-<标识>` 目录、对应 ZIP 和 SHA256 文件，保留此前产物。ZIP 中包含整个发布目录，必须完整解压；`release-info.json` 记录 SDK、发布类型和检查结果。`checksPassed` 表示核心假工具检查；`nativeUiChecksPassed` 和 `publishedSmokePassed` 在未指定 UI 检查时为 `null`，实际通过后为 `true`。
-
-`-IncludeUiChecks` 在核心检查后运行原生 WPF 回归，在发布后运行真实发布程序的启动、单实例及菜单退出检查，然后才压缩。检查失败会阻止生成 ZIP，并保留已有诊断产物。可用 `-SkipChecks` 跳过已单独完成的核心检查，该状态会写入发布信息；不能与 `-IncludeUiChecks` 同时使用。
-
-UI 检查需要可交互的 Windows 桌面；同一 Windows 用户会话中应先从托盘退出其他 ADB Dock 实例，避免单实例机制使发布启动检查失败。测试使用独立设置和假设备快照，假工具拒绝安装、按键、截图写设备命令和投屏启动，不读取日常配置；弹窗检查仅控制测试拥有的窗口，不发送全局键盘或鼠标输入。检查期间会短暂显示原生窗口，日志和截图保留在 `artifacts\ui-checks-*` 与 `artifacts\release-smoke-*`。
-
-也可从工程根目录单独运行这两类检查：
-
-```powershell
-dotnet build .\AdbDock.sln -c Release --disable-build-servers -m:1 -nr:false
 $fixture = (Resolve-Path '.\tests\AdbDock.Checks\bin\Release\net10.0\AdbDock.Checks.exe').Path
 $uiChecks = (Resolve-Path '.\tests\AdbDock.UiChecks\bin\Release\net10.0-windows\AdbDock.UiChecks.exe').Path
 & $uiChecks $fixture (Join-Path $PWD 'artifacts\ui-checks')
-
-# 将下列路径替换为实际发布目录；生成独立启动检查目录
-$publishedApp = 'G:\path\to\published-folder\AdbDock.exe'
-$smokeArtifacts = Join-Path $PWD ('artifacts\release-smoke-' + [Guid]::NewGuid().ToString('N'))
-& $uiChecks --smoke $publishedApp $fixture $smokeArtifacts
+& $uiChecks --startup-checks (Join-Path $PWD 'artifacts\startup-checks')
 ```
 
-## 生成 Windows 安装程序
+自启动专项使用临时注册表测试键，不修改实际启动项。安装、升级和卸载检查使用独立安装目录、快捷方式和测试注册表：
 
 ```powershell
-# 构建、核心检查、自包含发布，再生成当前用户安装程序
-.\scripts\BuildInstaller.ps1
-
-# 可交互桌面中追加原生窗口回归与自包含程序启动检查
-.\scripts\BuildInstaller.ps1 -IncludeUiChecks
-
-# 复用已生成的完整自包含目录；不会修改该输入目录
-.\scripts\BuildInstaller.ps1 -PayloadDirectory 'G:\path\to\self-contained-payload'
+.\scripts\TestInstaller.ps1 `
+  -PayloadDirectory 'C:\path\to\self-contained-output' `
+  -NsisCompilerPath 'C:\path\to\makensis.exe'
 ```
 
-安装器始终包含 .NET 10 Windows x64 运行时。脚本使用项目内 `.build\nuget-packages` 缓存；首次还原自包含运行时和下载 NSIS 编译器需要网络。脚本固定 NSIS 3.13 便携版的下载地址及 SHA256，验证 ZIP 后才在 `.build\dependencies` 解压使用，不向系统安装 NSIS。也可通过 `-NsisCompilerPath '<完整路径>\makensis.exe'` 指定已有的 NSIS 3.13 编译器。
+</details>
 
-输出是 `artifacts\AdbDock-<版本>-win-x64-Setup-<时间>-<标识>.exe`、对应 `.sha256` 及 `.installer-info.json`。安装信息记录自包含运行时、默认登录启动和检查结果。脚本保留此前安装包及本次中间产物，不自动运行安装程序。`-SkipChecks` 可跳过已单独完成的核心检查，不能与 `-IncludeUiChecks` 同用；生成安装包本身不表示已经验证安装与卸载流程。
+V0.1.2 已记录 **34 组核心、24 组原生界面、8 组隔离安装流程检查通过**。自动检查不能替代真机操作和多屏 DPI 验收，具体范围见[开发进度](开发进度.md)。
 
-传入 `-PayloadDirectory` 时，必须包含 `coreclr.dll`、`hostfxr.dll` 和 `PresentationFramework.dll` 等完整自包含文件；脚本会复制到独立暂存目录，补入项目说明及 .NET 许可与第三方声明。卸载清单逐项列出这些文件，仅删除本程序随附的内容，不递归删除整个安装目录。安装包不包含 ADB 或 scrcpy，安装后仍按前文配置现有工具。
+<a id="packaging"></a>
+## 打包发布
 
-## 验证范围
+```powershell
+# 自包含 Windows x64 安装程序：构建、核心检查、发布、NSIS 打包
+.\scripts\BuildInstaller.ps1
 
-核心自动检查覆盖参数传递、二进制截图、超时与取消、设备状态、断连队列、Logcat 和投屏会话等逻辑。原生 WPF 检查验证实际控件、四边窗口边界、状态切换、弹窗、结果保留和会话关闭等行为；发布启动检查验证实际发布目录中的程序。假工具检查与编译成功不能替代真机验收。鼠标长按拖动的实际手感、100%/125%/150%/200% 缩放、混合 DPI 双屏和显示器移除，以及真机插拔、未授权/离线与网络状态变化、截图、安装、按键、投屏，仍须按 [需求说明](需求说明.md) 和 [开发进度](开发进度.md) 记录实际结果。
+# 需要 Desktop Runtime 的便携 ZIP
+.\scripts\Publish.ps1
 
-工程结构：`src/AdbDock.Core` 为设备通信与进程管理，`src/AdbDock.App` 为 WPF 窗口与托盘，`tests/AdbDock.Checks` 为核心假工具检查，`tests/AdbDock.UiChecks` 为原生窗口与发布启动检查。检查程序不依赖第三方测试包。
+# 自带运行时的便携 ZIP
+.\scripts\Publish.ps1 -SelfContained
+```
+
+输出写入 `artifacts\`，包含安装程序或 ZIP、SHA256 校验文件及验证信息 JSON。每次使用新目录，保留已有产物。安装包默认支持当前用户登录启动，仍需单独配置 ADB / scrcpy。
+
+首次打包需要联网还原运行时包；安装器脚本会下载并校验固定版本的 NSIS 3.13 便携编译器，不向系统安装 NSIS。安装器构建的运行时包缓存位于 `.build\nuget-packages`。
+
+<details>
+<summary>高级打包选项</summary>
+
+- 两个脚本均支持 `-IncludeUiChecks`，额外执行原生窗口和发布启动检查；需要可交互桌面并退出其他客户端。
+- `-SkipChecks` 跳过核心检查，仅在已单独完成验证后使用；跳过状态会写入 JSON，不能与 `-IncludeUiChecks` 同用。
+- 安装器支持 `-NsisCompilerPath` 指定已有 NSIS 3.13 编译器，以及 `-PayloadDirectory` 复用完整自包含发布目录。
+- 自包含目录必须保留全部运行时文件；脚本会补入项目说明、.NET 许可和第三方声明，并生成精确卸载清单。
+
+</details>
+
+## 常见问题
+
+- **ADB 不可用**：在设置中检查路径并检测工具，确认文件及配套 DLL 完整。
+- **设备未授权或离线**：解锁手机确认 USB 调试授权，检查数据线后刷新状态。
+- **投屏无法启动**：检查 scrcpy 完整发行目录及路径；投屏失败不会改变 ADB 在线数量。
+- **便携程序不能启动**：确认安装的是 .NET 10 **Desktop Runtime**，或使用自包含版本。
+- **受限环境构建失败**：可在当前 PowerShell 会话设置 `$env:MSBuildEnableWorkloadResolver = 'false'`；需要隔离 CLI 配置时，再设置 `$env:DOTNET_CLI_HOME = Join-Path $PWD '.build\dotnet-home'`。
+
+## 项目结构与更多说明
+
+```text
+src/AdbDock.App/        WPF 窗口、托盘、设置、日志与性能界面
+src/AdbDock.Core/       ADB 通信、任务取消、进程与投屏会话
+tests/                 核心检查与原生窗口检查
+installer/             NSIS 安装与卸载脚本
+scripts/               打包、安装验证与图标生成
+docs/images/           使用假设备数据的原生界面截图
+index.html             浏览器交互原型，仅使用模拟设备与命令
+```
+
+[需求与验收基线](需求说明.md) · [开发进度与待验收项目](开发进度.md) · [反馈问题](https://github.com/rusion2/adb-dock/issues)
