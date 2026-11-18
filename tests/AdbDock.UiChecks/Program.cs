@@ -337,21 +337,127 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 }
                 finally { settings.ScreenshotDirectory = oldDirectory; }
             });
+            await Check("first collapse places the tab one third down the right edge", async () =>
+            {
+                Equal<FloatingTabPlacement?>(null, settings.FloatingTab);
+                var card = Desktop.Bounds(window);
+                var work = Desktop.WorkArea(window);
+                Desktop.Place(window, work.Left, work.Top + (work.Height - card.Height) / 2);
+                Invoke("CollapsePanel"); await Layout();
+                var tab = AssertTabEdge(DockSide.Right, work);
+                Equal(work.Top + work.Height / 3, tab.Top);
+                Invoke("ExpandPanel", false); await Layout();
+            });
+            await Check("inventory changes keep the tab anchor and use overflow near the end of an edge", async () =>
+            {
+                const string oneDevice = "UI-C device usb:1 model:Fixture_One\n";
+                try
+                {
+                    foreach (var side in new[] { DockSide.Right, DockSide.Top })
+                    {
+                        int LeadingEdge(NativeRect bounds) => side == DockSide.Right ? bounds.Top : bounds.Left;
+                        await SetSnapshot(Initial, () => model.Devices.Count == 4);
+                        await ReleaseCardAtEdge(side);
+                        var work = Desktop.WorkArea(window);
+                        var full = AssertTabEdge(side, work);
+                        await SetSnapshot(oneDevice, () => model.Devices.Count == 1);
+                        var minimum = AssertTabEdge(side, work);
+                        Equal(LeadingEdge(full), LeadingEdge(minimum));
+                        Require(side == DockSide.Right ? minimum.Height < full.Height : minimum.Width < full.Width,
+                            "removing devices did not shorten the compact tab");
+                        var margin = (int)Math.Round(12 * Desktop.Scale(window));
+                        var placement = side == DockSide.Right
+                            ? new FloatingTabPlacement(side, work.Right - minimum.Width, work.Bottom - minimum.Height - margin)
+                            : new FloatingTabPlacement(side, work.Right - minimum.Width - margin, work.Top);
+                        Invoke("ExpandPanel", false); await Layout();
+                        settings.FloatingTab = placement;
+                        Invoke("RestorePlacement"); Invoke("CollapsePanel"); await Layout();
+                        var anchoredTab = AssertTabEdge(side, work);
+                        Equal(side == DockSide.Right ? placement.Y : placement.X, LeadingEdge(anchoredTab));
+
+                        await SetSnapshot(SixDevices(), () => model.Devices.Count == 6);
+                        Equal(LeadingEdge(anchoredTab), LeadingEdge(AssertTabEdge(side, work)));
+                        Equal("+6", Named<StackPanel>("EdgeDevices").Children.OfType<Button>().Single().Content as string);
+                        Equal(placement, settings.FloatingTab);
+
+                        await SetSnapshot(oneDevice, () => model.Devices.Count == 1);
+                        Equal(LeadingEdge(anchoredTab), LeadingEdge(AssertTabEdge(side, work)));
+                        Require(Named<StackPanel>("EdgeDevices").Children.OfType<Button>().Single().DataContext is DeviceRow { Serial: "UI-C" },
+                            "single device did not replace the overflow entry");
+                    }
+                }
+                finally
+                {
+                    Invoke("ExpandPanel", false);
+                    await SetSnapshot(Initial, () => model.Devices.Count == 4);
+                }
+            });
+            await Check("restored tabs and corner moves use the destination monitor and legacy coordinates still load", async () =>
+            {
+                var card = Desktop.Bounds(window);
+                var currentWork = Desktop.WorkArea(window);
+                var tabWork = System.Windows.Forms.Screen.AllScreens
+                    .Select(screen => screen.WorkingArea)
+                    .Select(area => new NativeRect(area.Left, area.Top, area.Width, area.Height))
+                    .FirstOrDefault(area => !area.Equals(currentWork), currentWork);
+                var placement = new FloatingTabPlacement(DockSide.Left, tabWork.Left, tabWork.Top + tabWork.Height / 4);
+                settings.Side = DockSide.Bottom;
+                settings.WindowX = card.Left;
+                settings.WindowY = card.Top;
+                settings.FloatingTab = placement;
+                Invoke("RestorePlacement"); await Layout();
+                Invoke("CollapsePanel"); await Layout();
+                var restored = AssertTabEdge(placement.Side, tabWork);
+                Equal(placement.X, restored.Left); Equal(placement.Y, restored.Top);
+                var tabScale = Desktop.Scale(window);
+
+                Invoke("ExpandPanel", false); await Layout();
+                foreach (var side in new[] { DockSide.Right, DockSide.Bottom })
+                {
+                    Desktop.Place(window, card.Left, card.Top, card.Width, card.Height);
+                    await Layout();
+                    Equal(currentWork, Desktop.WorkArea(window));
+                    Invoke("CollapsePanelAt", new FloatingTabPlacement(side, tabWork.Right - 1, tabWork.Bottom - 1));
+                    await Layout();
+                    AssertSavedTab(side, tabWork);
+                    var saved = settings.FloatingTab!;
+                    if (side == DockSide.Right)
+                        Equal(Math.Max(tabWork.Top, tabWork.Bottom - (int)Math.Round(171 * tabScale)), saved.Y);
+                    else
+                        Equal(Math.Max(tabWork.Left, tabWork.Right - (int)Math.Round(149 * tabScale)), saved.X);
+                    Invoke("ExpandPanel", false); await Layout();
+                }
+
+                var legacyX = tabWork.Left + tabWork.Width / 4;
+                var legacyY = tabWork.Top;
+                var legacyDirectory = Path.Combine(artifactDirectory, "legacy-placement");
+                Directory.CreateDirectory(legacyDirectory);
+                File.WriteAllText(Path.Combine(legacyDirectory, "settings.json"), FormattableString.Invariant(
+                    $$"""{"Side":"Top","WindowX":{{legacyX}},"WindowY":{{legacyY}}}"""));
+                var legacy = new SettingsStore(legacyDirectory).Load();
+                Equal(new FloatingTabPlacement(DockSide.Top, legacyX, legacyY), legacy.FloatingTab);
+                settings.Side = legacy.Side;
+                settings.WindowX = legacy.WindowX;
+                settings.WindowY = legacy.WindowY;
+                settings.FloatingTab = legacy.FloatingTab;
+                Invoke("RestorePlacement"); await Layout();
+                Invoke("CollapsePanel"); await Layout();
+                var legacyTab = AssertTabEdge(DockSide.Top, tabWork);
+                Equal(legacyX, legacyTab.Left); Equal(legacyY, legacyTab.Top);
+                Invoke("ExpandPanel", false); await Layout();
+            });
             await Check("released card drag collapses immediately at all four edges", async () =>
             {
                 foreach (var side in new[] { DockSide.Left, DockSide.Right, DockSide.Top, DockSide.Bottom })
                 {
                     settings.AutoCollapse = false; settings.ShowFloatingTab = true;
                     await ReleaseCardAtEdge(side);
-                    var bounds = Desktop.Bounds(window); var work = Desktop.WorkArea(window); var scale = Desktop.Scale(window);
-                    Within(bounds, work);
-                    Require(Field<bool>(window, "collapsed"), "edge drag release did not collapse the card");
+                    var bounds = AssertTabEdge(side, Desktop.WorkArea(window));
+                    var scale = Desktop.Scale(window);
                     Equal(side, settings.Side);
                     var horizontal = side is DockSide.Top or DockSide.Bottom;
                     Equal(horizontal ? Orientation.Horizontal : Orientation.Vertical, Named<StackPanel>("EdgePanel").Orientation);
                     Require(horizontal ? bounds.Height <= 70 * scale : bounds.Width <= 58 * scale, "native hit area stayed expanded");
-                    var distance = side switch { DockSide.Left => bounds.Left - work.Left, DockSide.Right => work.Right - bounds.Right, DockSide.Top => bounds.Top - work.Top, _ => work.Bottom - bounds.Bottom };
-                    Require(Math.Abs(distance) <= 2, "tag failed to touch expected edge");
                     var arrow = Named<Button>("EdgeArrow");
                     Require(arrow.ActualWidth >= 32 && arrow.ActualHeight >= 32, "expand control target is smaller than 32 DIP");
                     Equal(horizontal ? 32d : 36d, arrow.Width); Equal(horizontal ? 36d : 32d, arrow.Height);
@@ -364,6 +470,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                     Within(bounds, Desktop.Bounds(window));
                     Require(!Field<bool>(window, "collapsed"), "edge arrow failed to open the covering card");
                     Invoke("CollapsePanel"); await Layout();
+                    EqualBounds(bounds, AssertTabEdge(side, Desktop.WorkArea(window)));
                 }
             });
             await Check("arrow hover remains compact beyond the former hover and leave delays", async () =>
@@ -383,6 +490,9 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 var summary = Named<Border>("EdgeSummary");
                 Require(summary.Focusable, "drag summary is not keyboard focusable");
                 var original = Desktop.Bounds(window); var originalSide = settings.Side;
+                var originalPlacement = settings.FloatingTab;
+                var store = new SettingsStore(artifactDirectory);
+                var savedPlacement = store.Load().FloatingTab;
                 var screen = summary.PointToScreen(new Point(summary.ActualWidth / 2, summary.ActualHeight / 2));
                 var start = new NativePoint { X = (int)Math.Round(screen.X), Y = (int)Math.Round(screen.Y) };
                 var threshold = SystemParameters.MinimumHorizontalDragDistance * Desktop.Scale(window);
@@ -407,7 +517,9 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal(original.Top, Desktop.Bounds(window).Top);
                 window.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, Environment.TickCount, Key.Escape)
                     { RoutedEvent = Keyboard.PreviewKeyDownEvent });
-                EqualBounds(original, Desktop.Bounds(window)); Equal(originalSide, settings.Side);
+                await Layout();
+                EqualBounds(original, AssertTabEdge(originalSide, Desktop.WorkArea(window))); Equal(originalSide, settings.Side);
+                Equal(originalPlacement, settings.FloatingTab); Equal(savedPlacement, store.Load().FloatingTab);
                 Require(!summary.IsMouseCaptured && !Field<bool>(window, "draggingEdge") && ToolTipService.GetIsEnabled(Named<StackPanel>("EdgePanel")),
                     "cancelled drag did not restore capture, tooltip and drag state");
                 var work = Desktop.WorkArea(window);
@@ -415,13 +527,13 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Invoke("BeginSummaryPress", start);
                 // Mouse-up must honor the final displacement even without an intervening move event.
                 Invoke("FinishPress", false, release);
-                Require(Field<bool>(window, "collapsed"), "drag release accidentally opened the panel");
-                Equal(DockSide.Right, settings.Side); Within(Desktop.Bounds(window), Desktop.WorkArea(window));
                 await Layout();
+                AssertSavedTab(DockSide.Right, work);
                 foreach (var (key, side) in new[] { (Key.Left, DockSide.Left), (Key.Up, DockSide.Top), (Key.Right, DockSide.Right), (Key.Down, DockSide.Bottom) })
                 {
                     summary.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, Environment.TickCount, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
-                    await Layout(); Equal(side, settings.Side); Within(Desktop.Bounds(window), Desktop.WorkArea(window));
+                    await Layout();
+                    AssertSavedTab(side, work);
                 }
                 Named<Button>("EdgeArrow").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 await Layout(); Require(!Field<bool>(window, "collapsed"), "dedicated expand control did not open the panel");
@@ -473,7 +585,12 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                     Require(!Field<bool>(window, "collapsed"), "returning to the old tab did not reset the grace period");
                     Invoke("EvaluateAutoCollapse", outside, now + 10_002 + delay * 2);
                     Equal(automatic, Field<bool>(window, "collapsed"));
-                    if (!automatic)
+                    if (automatic)
+                    {
+                        await Layout();
+                        EqualBounds(tab, AssertTabEdge(DockSide.Right, Desktop.WorkArea(window)));
+                    }
+                    else
                     {
                         Invoke("EvaluateAutoCollapse", outside, now + 1_000_000);
                         Require(!Field<bool>(window, "collapsed") && !Field<DispatcherTimer>(window, "leaveTimer").IsEnabled,
@@ -485,6 +602,9 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
             await Check("floating-tab toggle persists and close routes to tab or tray without exiting", async () =>
             {
                 settings.ShowFloatingTab = true; settings.AutoCollapse = false;
+                Invoke("CollapsePanel"); await Layout();
+                var originalTab = AssertTabEdge(DockSide.Right, Desktop.WorkArea(window));
+                var originalPlacement = settings.FloatingTab;
                 Invoke("ExpandPanel", true); Invoke("UpdateView"); await Layout();
                 var floating = Named<ToggleButton>("FloatButton"); var toggle = ToggleProvider(floating);
                 var indicator = Named<System.Windows.Shapes.Rectangle>("FloatIndicator");
@@ -525,22 +645,26 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Equal(BrushColor((Brush)window.FindResource("Accent")), BrushColor(floating.BorderBrush));
                 Capture(window, "13-floating-tab-enabled.png");
                 Named<Button>("CloseButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Layout();
-                Require(window.IsVisible && Field<bool>(window, "collapsed"), "close with floating tab enabled did not show a compact tab");
-                Within(Desktop.Bounds(window), Desktop.WorkArea(window));
+                EqualBounds(originalTab, AssertTabEdge(DockSide.Right, Desktop.WorkArea(window)));
                 InvokeTrayItem("显示设备面板"); await Until(() => window.IsVisible && !Field<bool>(window, "collapsed"));
                 window.Close(); await Layout();
-                Require(window.IsVisible && Field<bool>(window, "collapsed"), "OS close did not use the compact-tab behavior");
+                EqualBounds(originalTab, AssertTabEdge(DockSide.Right, Desktop.WorkArea(window)));
+                Equal(originalPlacement, new SettingsStore(artifactDirectory).Load().FloatingTab);
                 InvokeTrayItem("显示设备面板"); await Until(() => window.IsVisible && !Field<bool>(window, "collapsed"));
                 settings.AutoCollapse = false; settings.AutoCollapseDelaySeconds = 2; Invoke("UpdateView");
             });
             await Check("centered and tangential edge drags preserve the card and suspend the leave timer", async () =>
             {
                 Invoke("ExpandPanel", false); await Layout();
+                var originalPlacement = settings.FloatingTab ?? throw new InvalidOperationException("Previous tab placement missing");
+                var originalTabWork = Desktop.WorkArea(new NativePoint { X = originalPlacement.X, Y = originalPlacement.Y });
                 var bounds = Desktop.Bounds(window); var work = Desktop.WorkArea(window);
                 Desktop.Place(window, work.Left + (work.Width - bounds.Width) / 2, work.Top + (work.Height - bounds.Height) / 2);
                 await Layout(); Invoke("FinishTitleDrag", bounds); await Layout();
                 Require(!Field<bool>(window, "collapsed"), "centered drag release collapsed card");
                 Equal(DockSide.None, settings.Side); Within(Desktop.Bounds(window), Desktop.WorkArea(window));
+                Equal(originalPlacement, settings.FloatingTab);
+                Equal(originalPlacement, new SettingsStore(artifactDirectory).Load().FloatingTab);
                 RaiseMouseEvent(window, Mouse.MouseLeaveEvent); RaiseDeactivated(); await Task.Delay(750);
                 Require(!Field<bool>(window, "collapsed"), "centered card collapsed before its leave grace");
                 bounds = Desktop.Bounds(window);
@@ -560,6 +684,10 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 Require(!Field<bool>(window, "collapsed"), "moving along an existing edge collapsed the card");
                 Equal(edgeStart.Top, Desktop.Bounds(window).Top);
                 await VerifyActualLeaveTimerTick();
+                Invoke("CollapsePanel"); await Layout();
+                var tab = AssertTabEdge(originalPlacement.Side, originalTabWork);
+                Equal(originalPlacement.Y, tab.Top);
+                Invoke("ExpandPanel", false); await Layout();
             });
             await Check("edge device opens the compact main action surface for the exact device", async () =>
             {
@@ -788,7 +916,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
                 await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Count == 4);
                 Equal("2", model.OnlineCount);
             });
-            await Check("an active installation and mirror survive discovery failures until a confirmed disconnect", DiscoveryDuringOperationsAsync);
+            await Check("installation and mirror survive discovery failures and stop when the same serial reconnects", DiscoveryDuringOperationsAsync);
             await Check("operation detail survives subsequent listener snapshots", async () =>
             {
                 const string detail = "UI result retained after refresh: complete diagnostic output";
@@ -1184,6 +1312,8 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
     private async Task DiscoveryDuringOperationsAsync()
     {
         const string serial = "UI-C";
+        var online = Initial.Replace("model:Fixture_One", "model:Fixture_One transport_id:41");
+        await SetSnapshot(online, () => model.Devices.Any(d => d.Serial == serial && d.Device.TransportId == 41));
         var row = model.Devices.Single(device => device.Serial == serial);
         await (Task)Invoke("RunDeviceActionAsync", row, "mirror")!;
         using var mirror = Process.GetProcessById(int.Parse(File.ReadAllText(snapshotFile + ".mirror-pid")));
@@ -1206,7 +1336,7 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
             Require(!install.IsCompleted && !mirror.HasExited, "tracker restart stopped an online device's clients");
 
             await SetSnapshot("ERROR:temporary devices -l failure", () => !model.AdbAvailable);
-            await SetSnapshot(Initial, () => model.AdbAvailable && model.Devices.Any(d => d.Serial == serial && d.IsOnline));
+            await SetSnapshot(online, () => model.AdbAvailable && model.Devices.Any(d => d.Serial == serial && d.IsOnline));
             File.Delete(apk);
             await install.WaitAsync(TimeSpan.FromSeconds(10));
             Require(!mirror.HasExited, "failed list query stopped the existing mirror process");
@@ -1215,9 +1345,10 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
             File.Create(apk).Dispose();
             var nextInstall = operations.InstallAsync(serial, apk, cleanup.Token);
             await Until(() => File.Exists(started));
-            await SetSnapshot(Initial.Replace("UI-C device", "UI-C offline"), () => model.Devices.Any(d => d.Serial == serial && !d.IsOnline));
+            await SetSnapshot(online.Replace("transport_id:41", "transport_id:42"),
+                () => model.Devices.Any(d => d.Serial == serial && d.IsOnline && d.Device.TransportId == 42));
             await Until(() => nextInstall.IsCompleted && mirror.HasExited);
-            Require(nextInstall.IsCanceled, "confirmed offline device did not cancel its installation");
+            Require(nextInstall.IsCanceled, "same-serial transport replacement did not cancel the old installation");
         }
         finally
         {
@@ -1426,6 +1557,31 @@ internal sealed class UiChecks(string tool, string artifactDirectory, AdbDock.Ap
         bitmap.Render(target);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var file = File.Create(Path.Combine(artifactDirectory, name)); encoder.Save(file);
+    }
+    private NativeRect AssertTabEdge(DockSide side, NativeRect work)
+    {
+        Require(window.IsVisible && Field<bool>(window, "collapsed"), "compact tab was not visible at the expected edge");
+        var bounds = Desktop.Bounds(window);
+        Within(bounds, work);
+        var (gap, corners) = side switch
+        {
+            DockSide.Left => (bounds.Left - work.Left, new CornerRadius(0, 14, 14, 0)),
+            DockSide.Right => (work.Right - bounds.Right, new CornerRadius(14, 0, 0, 14)),
+            DockSide.Top => (bounds.Top - work.Top, new CornerRadius(0, 0, 14, 14)),
+            DockSide.Bottom => (work.Bottom - bounds.Bottom, new CornerRadius(14, 14, 0, 0)),
+            _ => throw new ArgumentOutOfRangeException(nameof(side))
+        };
+        Require(Math.Abs(gap) <= 2, $"tab missed the {side} edge by {gap} pixels");
+        Equal(corners, Named<Border>("Frame").CornerRadius);
+        return bounds;
+    }
+    private void AssertSavedTab(DockSide side, NativeRect work)
+    {
+        var bounds = AssertTabEdge(side, work);
+        Equal(side, settings.Side);
+        var placement = new FloatingTabPlacement(side, bounds.Left, bounds.Top);
+        Equal(placement, settings.FloatingTab);
+        Equal(placement, new SettingsStore(artifactDirectory).Load().FloatingTab);
     }
     private static void Within(NativeRect bounds, NativeRect work) => Require(bounds.Left >= work.Left - 2 && bounds.Top >= work.Top - 2 && bounds.Right <= work.Right + 2 && bounds.Bottom <= work.Bottom + 2, "window exceeds monitor work area");
     private static void EqualBounds(NativeRect expected, NativeRect actual)

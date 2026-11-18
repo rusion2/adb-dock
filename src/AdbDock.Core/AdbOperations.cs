@@ -25,8 +25,8 @@ public sealed partial class AdbOperations : IAsyncDisposable
     public Task ScreenshotAsync(string serial, string destination, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
-        return RunShortAsync(serial, token => ProcessRunner.RunBinaryToFileAsync(_adbPath,
-            ["-s", serial, "exec-out", "screencap", "-p"], destination, ShortTimeout, token, PngScreenshot.Validate), cancellationToken);
+        return RunShortAsync(serial, (target, token) => ProcessRunner.RunBinaryToFileAsync(_adbPath,
+            target.Arguments("exec-out", "screencap", "-p"), destination, ShortTimeout, token, PngScreenshot.Validate), cancellationToken);
     }
 
     public Task InstallAsync(string serial, string apkPath, CancellationToken cancellationToken = default)
@@ -37,9 +37,9 @@ public sealed partial class AdbOperations : IAsyncDisposable
             throw new ArgumentException("请选择 APK 文件。", nameof(apkPath));
         if (!File.Exists(fullPath)) throw new FileNotFoundException("找不到 APK 文件。", fullPath);
 
-        return RunShortAsync(serial, async token =>
+        return RunShortAsync(serial, async (target, token) =>
         {
-            var result = await ProcessRunner.RunAsync(_adbPath, ["-s", serial, "install", "-r", fullPath],
+            var result = await ProcessRunner.RunAsync(_adbPath, target.Arguments("install", "-r", fullPath),
                 TimeSpan.FromMinutes(2), token).ConfigureAwait(false);
             result.EnsureSuccess();
             var text = string.Concat(result.Output, "\n", result.Error);
@@ -63,17 +63,17 @@ public sealed partial class AdbOperations : IAsyncDisposable
             "WAKE" => "224",
             _ => throw new ArgumentException("仅支持 Home、Back、Recent、Wake。", nameof(key))
         };
-        return RunShortAsync(serial, async token =>
+        return RunShortAsync(serial, async (target, token) =>
         {
             // All remote shell arguments are fixed tokens, never user-provided shell fragments.
             var result = await ProcessRunner.RunAsync(_adbPath,
-                ["-s", serial, "shell", "input", "keyevent", keyCode], ShortTimeout, token).ConfigureAwait(false);
+                target.Arguments("shell", "input", "keyevent", keyCode), ShortTimeout, token).ConfigureAwait(false);
             result.EnsureSuccess();
         }, cancellationToken);
     }
 
     public Task<string> ReadInfoAsync(string serial, CancellationToken cancellationToken = default) =>
-        WithDeviceAsync(serial, async token =>
+        WithDeviceAsync(serial, async (connection, token) =>
         {
             (string Label, string Property)[] properties =
             [
@@ -86,36 +86,42 @@ public sealed partial class AdbOperations : IAsyncDisposable
             foreach (var (label, property) in properties)
             {
                 var result = await ProcessRunner.RunAsync(_adbPath,
-                    ["-s", serial, "shell", "getprop", property], ShortTimeout, token).ConfigureAwait(false);
+                    connection.Target.Arguments("shell", "getprop", property), ShortTimeout, token).ConfigureAwait(false);
                 result.EnsureSuccess();
                 info.Append(label).Append('：').AppendLine(string.IsNullOrWhiteSpace(result.Output) ? "未知" : result.Output.Trim());
             }
             return info.ToString().TrimEnd();
         }, queued: true, cancellationToken);
 
-    public void UpdateOnlineDevices(IEnumerable<string> serials)
+    public void UpdateOnlineDevices(IEnumerable<string> serials) => UpdateOnlineTargets(DeviceTarget.FromSerials(serials));
+
+    public void ApplySnapshot(DeviceSnapshot snapshot)
     {
-        ArgumentNullException.ThrowIfNull(serials);
-        var online = serials.ToHashSet(StringComparer.Ordinal);
-        if (online.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("设备序列号不能为空。", nameof(serials));
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.IsAvailable) UpdateOnlineTargets(DeviceTarget.Online(snapshot));
+    }
+
+    private void UpdateOnlineTargets(Dictionary<string, DeviceTarget> online)
+    {
         List<DeviceConnection> disconnected = [];
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             foreach (var (serial, device) in _devices)
             {
-                if (device.Generation is not null && !online.Contains(serial))
+                if (device.Generation is { } current &&
+                    (!online.TryGetValue(serial, out var target) || target != current.Target))
                 {
-                    disconnected.Add(device.Generation);
+                    disconnected.Add(current);
                     device.Generation = null;
                     RemoveIdleDevice(serial, device);
                 }
             }
-            foreach (var serial in online)
+            foreach (var (serial, target) in online)
             {
                 if (!_devices.TryGetValue(serial, out var device))
                     _devices.Add(serial, device = new DeviceQueue());
-                device.Generation ??= new DeviceConnection();
+                device.Generation ??= new DeviceConnection(target);
             }
         }
         foreach (var connection in disconnected) connection.Disconnect();
@@ -125,12 +131,12 @@ public sealed partial class AdbOperations : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(onLine);
         // Logcat has its own process and cancellation scope; it never holds the short-command semaphore.
-        return WithDeviceAsync<bool>(serial, async token =>
+        return WithDeviceAsync<bool>(serial, async (connection, token) =>
         {
             using var session = CancellationTokenSource.CreateLinkedTokenSource(token);
             using var readers = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
             session.Token.ThrowIfCancellationRequested();
-            using var process = ProcessRunner.Start(_adbPath, ["-s", serial, "logcat", "-v", "time"]);
+            using var process = ProcessRunner.Start(_adbPath, connection.Target.Arguments("logcat", "-v", "time"));
             var errors = new StringBuilder();
             var outputTask = PumpAsync(process.StandardOutput, false);
             var errorTask = PumpAsync(process.StandardError, true);
@@ -182,15 +188,15 @@ public sealed partial class AdbOperations : IAsyncDisposable
         }, queued: false, cancellationToken);
     }
 
-    private Task RunShortAsync(string serial, Func<CancellationToken, Task> action, CancellationToken cancellationToken) =>
-        WithDeviceAsync(serial, async token =>
+    private Task RunShortAsync(string serial, Func<DeviceTarget, CancellationToken, Task> action, CancellationToken cancellationToken) =>
+        WithDeviceAsync(serial, async (connection, token) =>
         {
-            await action(token).ConfigureAwait(false);
+            await action(connection.Target, token).ConfigureAwait(false);
             return true;
         }, queued: true, cancellationToken);
 
-    private async Task<T> WithDeviceAsync<T>(string serial, Func<CancellationToken, Task<T>> action,
-        bool queued, CancellationToken cancellationToken)
+    private async Task<T> WithDeviceAsync<T>(string serial, Func<DeviceConnection, CancellationToken, Task<T>> action,
+        bool queued, CancellationToken cancellationToken, DeviceConnection? expectedConnection = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serial);
         DeviceQueue device;
@@ -198,9 +204,13 @@ public sealed partial class AdbOperations : IAsyncDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (!_devices.TryGetValue(serial, out device!) || device.Generation is null)
+            _devices.TryGetValue(serial, out var queue);
+            if (expectedConnection is not null && queue?.Generation != expectedConnection)
+                throw new OperationCanceledException("设备连接已变化。", cancellationToken);
+            if (queue is null || queue.Generation is not { } current)
                 throw new InvalidOperationException("设备不在线，请等待设备连接并授权后再操作。");
-            generation = device.Generation.Retain();
+            device = queue;
+            generation = current.Retain();
             device.ActiveOperations++;
             _activeOperations++;
         }
@@ -214,7 +224,7 @@ public sealed partial class AdbOperations : IAsyncDisposable
                 acquired = true;
             }
             operation.Token.ThrowIfCancellationRequested();
-            var result = await action(operation.Token).ConfigureAwait(false);
+            var result = await action(generation, operation.Token).ConfigureAwait(false);
             operation.Token.ThrowIfCancellationRequested();
             return result;
         }

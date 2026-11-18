@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>ADB Dock prototype placement regression</title>
+<!-- Serve the repository root over localhost so the test and prototype share an origin. -->
+<pre id="result">Running…</pre>
+<iframe id="prototype" title="ADB Dock prototype" width="1000" height="700"></iframe>
+<script>
+  const result = document.getElementById("result");
+  const frame = document.getElementById("prototype");
+  const positionKey = "adb-dock-edge-position";
+  const previous = localStorage.getItem(positionKey);
+
+  async function run() {
+    function loadPrototype() {
+      return new Promise(resolve => {
+        frame.addEventListener("load", resolve, { once: true });
+        frame.src = "../../index.html";
+      });
+    }
+    const find = selector => frame.contentDocument.querySelector(selector);
+    const check = (condition, message) => { if (!condition) throw new Error(message); };
+    const workHeight = () => find("#desktop").clientHeight - find(".desktop-taskbar").offsetHeight;
+    const settleLayout = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const click = selector => find(selector).click();
+    const press = key => find("#edge-expand-button").dispatchEvent(new KeyboardEvent("keydown", { key }));
+    const tabOffset = side => find("#edge-tab")[side === "top" || side === "bottom" ? "offsetLeft" : "offsetTop"];
+
+    function dragPanelTo(left, top, lastMoveLeft) {
+      const panel = find("#dock");
+      const handle = find("#drag-handle");
+      const rect = handle.getBoundingClientRect();
+      const originX = rect.left + 30 - panel.offsetLeft;
+      const originY = rect.top + 20 - panel.offsetTop;
+      const emit = (type, x, y) => handle.dispatchEvent(new frame.contentWindow.PointerEvent(type, {
+        pointerId: 1, button: 0, clientX: originX + x, clientY: originY + y,
+      }));
+      const capture = handle.setPointerCapture;
+      // The test's synthetic events do not create an active browser pointer.
+      handle.setPointerCapture = () => {};
+      try {
+        emit("pointerdown", panel.offsetLeft, panel.offsetTop);
+        emit("pointermove", lastMoveLeft, top);
+        emit("pointerup", left, top);
+      } finally {
+        handle.setPointerCapture = capture;
+      }
+    }
+
+    function checkDock(side, offset) {
+      const tab = find("#edge-tab");
+      check(!tab.hidden && tab.classList.contains("side-" + side), "Expected the tab on the " + side + " edge");
+      check(tabOffset(side) === offset, "Unexpected along-edge offset on the " + side + " edge");
+      const position = {
+        left: tab.offsetLeft,
+        right: find("#desktop").clientWidth - tab.offsetLeft - tab.offsetWidth,
+        top: tab.offsetTop,
+        bottom: workHeight() - tab.offsetTop - tab.offsetHeight,
+      };
+      check(position[side] === 0, "The tab is not flush to the " + side + " edge");
+      const style = frame.contentWindow.getComputedStyle(tab);
+      const radii = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius];
+      const flushCorners = { left: [0, 3], right: [1, 2], top: [0, 1], bottom: [2, 3] };
+      check(radii.every((radius, index) => (radius === "0px") === flushCorners[side].includes(index)), "Incorrect rounded corners on the " + side + " edge");
+    }
+
+    try {
+      localStorage.removeItem(positionKey);
+      await loadPrototype();
+      const defaultOffset = Math.round(workHeight() / 3);
+      click("#close-panel-button");
+      checkDock("right", defaultOffset);
+
+      click('[data-scenario="empty"]');
+      checkDock("right", defaultOffset);
+      click('[data-scenario="mixed"]');
+      checkDock("right", defaultOffset);
+      click('[data-edge-device="pixel"]');
+      click("#back-button");
+      click("#close-panel-button");
+      checkDock("right", defaultOffset);
+
+      press("ArrowLeft");
+      checkDock("left", defaultOffset);
+      press("ArrowUp");
+      const horizontalOffset = tabOffset("top");
+      checkDock("top", horizontalOffset);
+      press("ArrowDown");
+      checkDock("bottom", horizontalOffset);
+      click("#edge-open-button");
+      click("#edge-demo-button");
+      checkDock("bottom", horizontalOffset);
+
+      await loadPrototype();
+      click("#close-panel-button");
+      checkDock("bottom", horizontalOffset);
+      press("ArrowRight");
+      const desktop = find("#desktop");
+      click('[data-scenario="empty"]');
+      const minimumHeight = find("#edge-tab").offsetHeight;
+      const desktopBorder = desktop.offsetHeight - desktop.clientHeight;
+      const overflowHeight = defaultOffset + minimumHeight + 8 + find(".desktop-taskbar").offsetHeight + desktopBorder;
+      desktop.style.height = `${overflowHeight}px`;
+      await settleLayout();
+      click('[data-scenario="mixed"]');
+      checkDock("right", defaultOffset);
+      check(find("[data-edge-more]")?.textContent === "+3", "Device growth should use overflow at the saved offset");
+
+      desktop.style.height = `${overflowHeight - 20}px`;
+      await settleLayout();
+      check(tabOffset("right") < defaultOffset, "The tab must clamp when its minimum size no longer fits");
+      desktop.style.height = "";
+      await settleLayout();
+      checkDock("right", defaultOffset);
+      check(!find("[data-edge-more]"), "The devices should return when there is enough space");
+
+      click("#reset-button");
+      click("#close-panel-button");
+      checkDock("right", defaultOffset);
+
+      const panel = find("#dock");
+      for (const [startGap, startTopDelta, lastMoveGap] of [[80, 10, 0], [45, -10, 25]]) {
+        click("#edge-open-button");
+        const right = desktop.clientWidth - panel.offsetWidth;
+        const releaseTop = Math.floor((workHeight() - panel.offsetHeight) / 2);
+        panel.style.left = `${right - startGap}px`;
+        panel.style.top = `${releaseTop + startTopDelta}px`;
+        dragPanelTo(right, releaseTop, right - lastMoveGap);
+        check(JSON.parse(localStorage.getItem(positionKey)).offset === releaseTop, "The saved anchor must match the panel's release position");
+        checkDock("right", releaseTop);
+      }
+      result.textContent = "PASS";
+    } catch (error) {
+      result.textContent = "FAIL " + error.message;
+    } finally {
+      if (previous === null) localStorage.removeItem(positionKey);
+      else localStorage.setItem(positionKey, previous);
+    }
+  }
+
+  run();
+</script>
+</html>

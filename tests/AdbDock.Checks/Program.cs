@@ -112,6 +112,7 @@ internal static class Program
         Equal("no permissions", devices[8].State, "multiword no-permissions state");
         Equal("custom-state", devices[9].State, "future raw states preserved");
         Equal("USB", devices[0].Connection, "explicit USB transport");
+        Check(devices[0].TransportId == 1 && devices[8].TransportId is null, "transport ID is optional ADB metadata");
         Equal("模拟器", devices[3].Connection, "emulator serial");
         Equal("网络", devices[4].Connection, "IPv4 serial");
         Equal("网络", devices[5].Connection, "bracketed IPv6 serial");
@@ -431,6 +432,13 @@ internal static class Program
                 "even a transient listener failure must not publish a false disconnect to active device sessions");
             Check(CommandFiles(directory, "track-devices").Length <= 4, "listener failure does not busy-loop");
 
+            WriteState(directory, $"{onlineSerial} device model:Confirmed_Phone transport_id:41\n");
+            await service.RefreshAsync();
+            Check(Latest(snapshots).Devices.Single().TransportId == 41, "transport ID is published with the online device");
+            WriteState(directory, $"{onlineSerial} device model:Confirmed_Phone transport_id:42\n");
+            await service.RefreshAsync();
+            Check(Latest(snapshots).Devices.Single().TransportId == 42, "transport-only changes publish a new online snapshot");
+
             WriteFixtureText(Path.Combine(directory, "exit-track.txt"), $"{onlineSerial} offline\n");
             await UntilAsync(() => Latest(snapshots).Devices.FirstOrDefault()?.State == "offline",
                 "an authoritative offline state still reaches subscribers after listener loss");
@@ -498,6 +506,7 @@ internal static class Program
             AutoCollapseDelaySeconds = 17,
             AutoStart = true,
             Side = DockSide.Top,
+            FloatingTab = new FloatingTabPlacement(DockSide.Left, -1920, 480),
             WindowX = -1250,
             WindowY = 240,
             DeviceAliases = new(StringComparer.Ordinal)
@@ -576,6 +585,17 @@ internal static class Program
         Check(currentPreferences.AutoCollapse && currentPreferences.AutoCollapseDelaySeconds == 5,
             "a stale pin field cannot override explicit preferences in the new schema");
         Equal(0, currentPreferences.DeviceAliases.Count, "older configuration without a device alias field still loads");
+
+        File.WriteAllText(path, "{\"Side\":\"Right\",\"WindowX\":1880,\"WindowY\":318}");
+        var docked = store.Load();
+        Equal(new FloatingTabPlacement(DockSide.Right, 1880, 318), docked.FloatingTab, "legacy dock coordinates seed the independent floating-tab placement");
+        docked.Side = DockSide.None;
+        docked.WindowX = 300;
+        docked.WindowY = 180;
+        store.Save(docked);
+        Equal(new FloatingTabPlacement(DockSide.Right, 1880, 318), store.Load().FloatingTab, "expanded coordinates do not replace the saved floating-tab placement");
+        File.WriteAllText(path, "{\"Side\":\"Left\",\"WindowX\":0,\"WindowY\":480,\"FloatingTab\":{\"Side\":999,\"X\":0,\"Y\":480}}");
+        Check(store.Load().FloatingTab is null && store.LoadError is null, "an invalid saved side falls back to default placement");
         return Task.CompletedTask;
     }
 

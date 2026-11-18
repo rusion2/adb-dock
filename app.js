@@ -18,12 +18,14 @@ const deviceStates = {
 };
 const scenarios = { healthy: ["pixel", "xiaomi"], mixed: ["pixel", "xiaomi", "samsung"], offline: ["pixel", "oneplus"], empty: [], error: [] };
 const commonActions = [["mirror", "mirror", "设备投屏", ""], ["screenshot", "camera", "一键截图", "primary-action"], ["install", "install", "安装 APK", ""], ["keys", "grid", "按键控制", ""], ["info", "info", "设备信息", ""], ["logcat", "log", "查看日志", ""]];
-const state = { scenario: "mixed", selected: null, showFloatingTab: true, autoCollapseEnabled: true, collapseDelaySeconds: 2, collapsed: false, hiddenToTray: false, side: null, edgeOffset: null, topmost: true, tasks: new Map(), generation: 0 };
-const remarks = new Map(currentDeviceRemarks());
 const desktop = $("#desktop");
+const desktopTaskbar = $(".desktop-taskbar", desktop);
 const dock = $("#dock");
 const edgeTab = $("#edge-tab");
 const dialog = $("#action-dialog");
+const edgePositionKey = "adb-dock-edge-position";
+const state = { scenario: "mixed", selected: null, showFloatingTab: true, autoCollapseEnabled: true, collapseDelaySeconds: 2, collapsed: false, hiddenToTray: false, edgePosition: readEdgePosition(), panelSide: null, topmost: true, tasks: new Map(), generation: 0 };
+const remarks = new Map(currentDeviceRemarks());
 let toastTimer;
 let drag = null;
 let edgePress = null;
@@ -104,6 +106,38 @@ function currentDevices() {
 
 function currentDevice() {
   return currentDevices().find((device) => device.id === state.selected);
+}
+
+function workAreaHeight() {
+  return desktop.clientHeight - desktopTaskbar.offsetHeight;
+}
+
+function isHorizontalEdge(side) {
+  return side === "top" || side === "bottom";
+}
+
+function defaultEdgeOffset(side) {
+  return Math.round((isHorizontalEdge(side) ? desktop.clientWidth : workAreaHeight()) / 3);
+}
+
+function readEdgePosition() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(edgePositionKey));
+    if (["left", "right", "top", "bottom"].includes(stored?.side) &&
+        Number.isFinite(stored.offset) && stored.offset >= 0) return stored;
+  } catch {
+    // The prototype can still be used when browser storage is unavailable.
+  }
+  return { side: "right", offset: defaultEdgeOffset("right") };
+}
+
+function setEdgePosition(side, offset) {
+  state.edgePosition = { side, offset: Math.max(0, offset) };
+  try {
+    localStorage.setItem(edgePositionKey, JSON.stringify(state.edgePosition));
+  } catch {
+    // Keep the new position for this page even if storage is unavailable.
+  }
 }
 
 function currentDeviceRemarks() {
@@ -198,7 +232,7 @@ function render() {
   const operationView = Boolean(device);
   if (dock.classList.contains("operation-view") !== operationView) {
     dock.classList.toggle("operation-view", operationView);
-    if (!dock.hidden) positionDock(dock.offsetLeft, state.side === "bottom" ? bounds().maxY : dock.offsetTop);
+    if (!dock.hidden) positionDock(dock.offsetLeft, state.panelSide === "bottom" ? bounds().maxY : dock.offsetTop);
   }
   $("#dock-content").innerHTML = device ? detailMarkup(device) : listMarkup();
   $("#view-caption").textContent = state.hiddenToTray ? "托盘隐藏" : state.collapsed ? "贴边状态" : device ? "设备操作" : "设备面板";
@@ -212,42 +246,45 @@ function render() {
 }
 
 function renderEdge() {
+  if (!state.collapsed || edgePress?.active) return;
   const list = currentDevices();
   const online = list.filter((device) => device.state === "online").length;
   const error = state.scenario === "error";
   const warning = online !== list.length;
   const hasOffline = list.some((device) => device.state === "offline");
   const tone = error ? "error" : !list.length ? "empty" : warning ? "warning" : "good";
-  const horizontal = state.side === "top" || state.side === "bottom";
-  const visibleCount = Math.max(1, Math.min(5, Math.floor((horizontal ? desktop.clientWidth - 158 : desktop.clientHeight - 180) / 39)));
-  edgeTab.className = `edge-tab tone-${tone}${state.side ? ` side-${state.side}` : ""}${horizontal ? " horizontal" : ""}${edgePress?.active ? " is-dragging" : ""}`;
+  const { side, offset } = state.edgePosition;
+  const horizontal = isHorizontalEdge(side);
+  edgeTab.className = `edge-tab tone-${tone} side-${side}${horizontal ? " horizontal" : ""}`;
   $("#edge-status").textContent = error ? "异常" : !list.length ? "未连接" : hasOffline ? "有离线" : warning ? "待授权" : "在线";
   $("#edge-count").innerHTML = error ? "—" : `${online}<span>/${list.length}</span>`;
   $(".edge-state .status-dot").className = `status-dot ${error ? "red" : !list.length ? "gray" : warning ? "amber" : "green"}`;
   const description = error ? "ADB 异常，设备数量未知" : `${online} 台在线，共发现 ${list.length} 台${warning ? "，有设备需要处理" : ""}`;
   edgeTab.setAttribute("aria-label", `${description}；每个图标对应一台设备，按住 ADB 和数量区域并移动可拖到四边`);
   $("#edge-expand-button").setAttribute("aria-label", `${description}，仅用于拖动，点击不展开，按住移动即拖动，方向键切换停靠边`);
-  $("#edge-device-list").innerHTML = error || !list.length
-    ? `<button class="edge-placeholder ${error ? "error" : ""}" data-edge-placeholder="${error ? "error" : "empty"}" aria-label="${error ? "ADB 异常，检查设置" : "未发现设备，查看连接指引"}">${icon(error ? "warning" : "usb")}</button>`
-    : list.slice(0, visibleCount).map((device) => {
+  const edgeList = $("#edge-device-list");
+  edgeList.innerHTML = `<button class="edge-placeholder ${error ? "error" : ""}" data-edge-placeholder="${error ? "error" : "empty"}" aria-label="${error ? "ADB 异常，检查设置" : "未发现设备，查看连接指引"}">${icon(error ? "warning" : "usb")}</button>`;
+  const axisLength = horizontal ? desktop.clientWidth : workAreaHeight();
+  const minimumLength = horizontal ? edgeTab.offsetWidth : edgeTab.offsetHeight;
+  const margin = Math.min(8, Math.max(0, (axisLength - minimumLength) / 2));
+  const visibleOffset = Math.max(margin, Math.min(axisLength - minimumLength - margin, offset));
+  const availableLength = axisLength - margin - visibleOffset;
+  if (list.length) {
+    // Each additional button uses 34 pixels and a 5-pixel gap. The +N button takes a slot.
+    const slots = 1 + Math.floor(Math.max(0, availableLength - minimumLength) / 39);
+    const capacity = Math.min(5, slots);
+    const visibleCount = list.length > capacity ? Math.min(5, slots - 1) : capacity;
+    edgeList.innerHTML = list.slice(0, visibleCount).map((device) => {
       const status = deviceStates[device.state];
       const name = deviceDisplayName(device);
       const remark = remarks.get(device.serial);
       const label = `${name}，${status.label}，${device.connection}，${device.serial}；点击或向左滑动${device.state === "online" ? "打开此设备的操作面板" : "查看连接指引"}`;
       return `<button class="edge-device-button ${device.state}${remark ? " has-remark" : ""}" data-edge-device="${escapeHTML(device.id)}" aria-label="${escapeHTML(label)}">${icon("device")}<span class="edge-device-marker" aria-hidden="true">${status.marker}</span>${remark ? `<span class="edge-device-remark" aria-hidden="true">${escapeHTML(remark)}</span>` : ""}<span class="edge-tooltip" aria-hidden="true"><b>${escapeHTML(name)}</b><em>${status.label} · ${device.connection}</em><small>${escapeHTML(device.serial)}</small></span></button>`;
     }).join("") + (list.length > visibleCount ? `<button class="edge-more" data-edge-more aria-label="另有 ${list.length - visibleCount} 台设备，展开全部设备">+${list.length - visibleCount}</button>` : "");
-  if (state.collapsed && !edgePress?.active) positionEdge();
-}
-
-function positionEdge(offset = state.edgeOffset) {
-  const horizontal = state.side === "top" || state.side === "bottom";
-  const workHeight = desktop.clientHeight - 48;
-  const maxOffset = Math.max(8, horizontal ? desktop.clientWidth - edgeTab.offsetWidth - 8 : workHeight - edgeTab.offsetHeight - 8);
-  const preferred = offset ?? (horizontal ? (desktop.clientWidth - edgeTab.offsetWidth) / 2 : 180);
-  state.edgeOffset = Math.max(8, Math.min(maxOffset, preferred));
-  edgeTab.style.left = horizontal ? `${state.edgeOffset}px` : state.side === "left" ? "0px" : "auto";
-  edgeTab.style.right = horizontal || state.side === "left" ? "auto" : "0px";
-  edgeTab.style.top = `${horizontal ? state.side === "top" ? 0 : Math.max(0, workHeight - edgeTab.offsetHeight) : state.edgeOffset}px`;
+  }
+  edgeTab.style.left = horizontal ? `${visibleOffset}px` : side === "left" ? "0px" : "auto";
+  edgeTab.style.right = side === "right" ? "0px" : "auto";
+  edgeTab.style.top = `${horizontal ? side === "top" ? 0 : Math.max(0, workAreaHeight() - edgeTab.offsetHeight) : visibleOffset}px`;
 }
 
 function bindContent() {
@@ -540,7 +577,7 @@ function setShowFloatingTab(enabled) {
 }
 
 function bounds() {
-  return { maxX: Math.max(0, desktop.clientWidth - dock.offsetWidth), maxY: Math.max(0, desktop.clientHeight - 48 - dock.offsetHeight) };
+  return { maxX: Math.max(0, desktop.clientWidth - dock.offsetWidth), maxY: Math.max(0, workAreaHeight() - dock.offsetHeight) };
 }
 
 function positionDock(x, y) {
@@ -555,32 +592,23 @@ function resetPosition() {
   dock.hidden = false;
   state.collapsed = false;
   state.hiddenToTray = false;
-  state.side = null;
-  state.edgeOffset = null;
+  state.panelSide = null;
   edgeTab.hidden = true;
-  positionDock((desktop.clientWidth - dock.offsetWidth) / 2 + (desktop.clientWidth > 600 ? 30 : 0), (desktop.clientHeight - 48 - dock.offsetHeight) / 2);
+  positionDock((desktop.clientWidth - dock.offsetWidth) / 2 + (desktop.clientWidth > 600 ? 30 : 0), (workAreaHeight() - dock.offsetHeight) / 2);
   updateDesktopTip();
   refreshAutoCollapse(true);
 }
 
-function collapse(manual = false) {
+function collapse() {
   if (!state.showFloatingTab || state.collapsed || state.hiddenToTray || dialog.open || filePickerOpen || drag || edgePress) return;
   stopAutoCollapse();
   openerBounds = null;
-  const { maxX, maxY } = bounds();
-  if (manual || !state.side) {
-    const nearest = [[dock.offsetLeft, "left"], [maxX - dock.offsetLeft, "right"], [dock.offsetTop, "top"], [maxY - dock.offsetTop, "bottom"]];
-    state.side = nearest.sort((a, b) => a[0] - b[0])[0][1];
-  }
-  const horizontal = state.side === "top" || state.side === "bottom";
-  const offset = state.edgeOffset ?? (horizontal ? dock.offsetLeft : dock.offsetTop + 110);
   const restoreFocus = dock.contains(document.activeElement);
   state.collapsed = true;
   state.hiddenToTray = false;
   dock.hidden = true;
   edgeTab.hidden = false;
   renderEdge();
-  positionEdge(offset);
   $("#view-caption").textContent = "贴边状态";
   updateDesktopTip();
   if (restoreFocus) $("#edge-expand-button").focus({ preventScroll: true });
@@ -597,9 +625,11 @@ function expand(focus = false) {
   state.hiddenToTray = false;
   dock.hidden = false;
   edgeTab.hidden = true;
+  if (fromTab) state.panelSide = state.edgePosition.side;
+  const side = state.panelSide;
   const { maxX, maxY } = bounds();
-  const x = fromTab ? state.side === "left" ? 0 : state.side === "right" ? maxX : centerX - dock.offsetWidth / 2 : parseFloat(dock.style.left) || 0;
-  const y = fromTab ? state.side === "top" ? 0 : state.side === "bottom" ? maxY : centerY - dock.offsetHeight / 2 : parseFloat(dock.style.top) || 0;
+  const x = fromTab ? side === "left" ? 0 : side === "right" ? maxX : centerX - dock.offsetWidth / 2 : parseFloat(dock.style.left) || 0;
+  const y = fromTab ? side === "top" ? 0 : side === "bottom" ? maxY : centerY - dock.offsetHeight / 2 : parseFloat(dock.style.top) || 0;
   positionDock(x, y);
   $("#view-caption").textContent = state.selected ? "设备操作" : "设备面板";
   updateDesktopTip();
@@ -609,7 +639,7 @@ function expand(focus = false) {
 
 function closePanel() {
   if (dialog.open || filePickerOpen || drag || edgePress || state.hiddenToTray) return;
-  if (state.showFloatingTab) { collapse(true); return; }
+  if (state.showFloatingTab) { collapse(); return; }
   stopAutoCollapse();
   openerBounds = null;
   state.collapsed = false;
@@ -626,7 +656,7 @@ edgeSummary.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
 
 
-  const press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: edgeTab.offsetLeft, top: edgeTab.offsetTop, side: state.side, offset: state.edgeOffset, active: false, moved: false };
+  const press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: edgeTab.offsetLeft, top: edgeTab.offsetTop, active: false };
   edgePress = press;
   refreshAutoCollapse(true);
   edgeSummary.focus({ preventScroll: true });
@@ -645,10 +675,9 @@ function moveEdgePress(event) {
     edgeTab.classList.add("is-dragging");
     $("#desktop-tip").lastElementChild.textContent = "拖到想要的位置，松手吸附最近的一边";
   }
-  press.moved = true;
   edgeTab.style.left = `${Math.max(0, Math.min(desktop.clientWidth - edgeTab.offsetWidth, press.left + dx))}px`;
   edgeTab.style.right = "auto";
-  edgeTab.style.top = `${Math.max(0, Math.min(desktop.clientHeight - 48 - edgeTab.offsetHeight, press.top + dy))}px`;
+  edgeTab.style.top = `${Math.max(0, Math.min(workAreaHeight() - edgeTab.offsetHeight, press.top + dy))}px`;
 }
 edgeSummary.addEventListener("pointermove", moveEdgePress);
 function finishEdgePress(event, cancelled = false) {
@@ -659,21 +688,17 @@ function finishEdgePress(event, cancelled = false) {
   desktop.classList.remove("edge-dragging");
   edgeTab.classList.remove("is-dragging");
   // 概况区仅用于拖动，短按和键盘激活都保持收起状态。
-  if (press.active && press.moved && !cancelled) {
+  if (press.active && !cancelled) {
     const rect = desktop.getBoundingClientRect();
-    const x = Math.max(0, Math.min(desktop.clientWidth, event.clientX - rect.left));
-    const workHeight = desktop.clientHeight - 48;
-    const y = Math.max(0, Math.min(workHeight, event.clientY - rect.top));
+    const x = Math.max(0, Math.min(desktop.clientWidth, event.clientX - rect.left - desktop.clientLeft));
+    const workHeight = workAreaHeight();
+    const y = Math.max(0, Math.min(workHeight, event.clientY - rect.top - desktop.clientTop));
     const distances = [["left", x], ["right", desktop.clientWidth - x], ["top", y], ["bottom", workHeight - y]];
-    state.side = distances.sort((a, b) => a[1] - b[1])[0][0];
-    state.edgeOffset = null;
-    renderEdge();
-    positionEdge(state.side === "top" || state.side === "bottom" ? x - edgeTab.offsetWidth / 2 : y - edgeTab.offsetHeight / 2);
-  } else if (press.active || press.moved || cancelled) {
-    state.side = press.side;
-    state.edgeOffset = press.offset;
-    renderEdge();
+    const side = distances.sort((a, b) => a[1] - b[1])[0][0];
+    const offset = isHorizontalEdge(side) ? press.left + (event.clientX - press.x) : press.top + (event.clientY - press.y);
+    setEdgePosition(side, offset);
   }
+  if (press.active) renderEdge();
   updateDesktopTip();
   refreshAutoCollapse(true);
 }
@@ -686,8 +711,10 @@ edgeSummary.addEventListener("keydown", (event) => {
   const side = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "top", ArrowDown: "bottom" }[event.key];
   if (!side || edgePress) return;
   event.preventDefault();
-  state.side = side;
-  state.edgeOffset = null;
+  const previous = state.edgePosition;
+  if (side === previous.side) return;
+  const offset = isHorizontalEdge(side) === isHorizontalEdge(previous.side) ? previous.offset : defaultEdgeOffset(side);
+  setEdgePosition(side, offset);
   renderEdge();
 });
 
@@ -714,19 +741,25 @@ function finishDrag(event) {
   const { maxX, maxY } = bounds();
   const dx = event.clientX - previous.x;
   const dy = event.clientY - previous.y;
+  if (Math.hypot(dx, dy) < 3) { refreshAutoCollapse(true); return; }
+  positionDock(previous.left + dx, previous.top + dy);
   const distances = [
     [Math.abs(dock.offsetLeft), "left", dx <= -3],
     [Math.abs(maxX - dock.offsetLeft), "right", dx >= 3],
     [Math.abs(dock.offsetTop), "top", dy <= -3],
     [Math.abs(maxY - dock.offsetTop), "bottom", dy >= 3],
   ].sort((a, b) => a[0] - b[0]);
-  state.side = distances[0][0] <= 20 ? distances[0][1] : null;
-  state.edgeOffset = null;
-  const approached = distances.filter(([distance, , toward]) => distance <= 20 && toward)[0];
+  state.panelSide = distances[0][0] <= 20 ? distances[0][1] : null;
+  const approached = distances.find(([distance, , toward]) => distance <= 20 && toward);
   if (approached) {
-    state.side = approached[1];
-    positionDock(state.side === "left" ? 0 : state.side === "right" ? maxX : dock.offsetLeft, state.side === "top" ? 0 : state.side === "bottom" ? maxY : dock.offsetTop);
-    collapse();
+    const side = approached[1];
+    state.panelSide = side;
+    positionDock(side === "left" ? 0 : side === "right" ? maxX : dock.offsetLeft, side === "top" ? 0 : side === "bottom" ? maxY : dock.offsetTop);
+    if (state.showFloatingTab) {
+      const offset = isHorizontalEdge(side) ? dock.offsetLeft : dock.offsetTop;
+      setEdgePosition(side, offset);
+      collapse();
+    }
   }
   refreshAutoCollapse(true);
 }
@@ -781,7 +814,6 @@ edgeTab.addEventListener("pointercancel", finishDeviceIconSwipe);
 edgeTab.addEventListener("lostpointercapture", finishDeviceIconSwipe);
 $("#close-panel-button").addEventListener("click", closePanel);
 $("#edge-demo-button").addEventListener("click", () => {
-  if (state.showFloatingTab && !state.collapsed && !state.hiddenToTray) { state.side = "right"; state.edgeOffset = null; positionDock(bounds().maxX, dock.offsetTop); }
   closePanel();
   notify(state.showFloatingTab ? "点击设备图标直达操作，或用“展开”查看全部设备。" : "已隐藏到模拟托盘，点击任务栏中的 ADB Dock 图标重新打开。");
 });
@@ -822,6 +854,7 @@ $("#reset-button").addEventListener("click", () => {
 
   closeDialog();
   state.topmost = true;
+  setEdgePosition("right", defaultEdgeOffset("right"));
   resetPosition();
   changeScenario("mixed");
   notify("已重置场景和位置，浮窗与收起设置保持不变。");
@@ -833,7 +866,9 @@ new ResizeObserver(() => {
     renderEdge();
     return;
   }
-  positionDock(state.side === "left" ? 0 : state.side === "right" ? bounds().maxX : dock.offsetLeft, state.side === "top" ? 0 : state.side === "bottom" ? bounds().maxY : dock.offsetTop);
+  const { panelSide } = state;
+  const { maxX, maxY } = bounds();
+  positionDock(panelSide === "left" ? 0 : panelSide === "right" ? maxX : dock.offsetLeft, panelSide === "top" ? 0 : panelSide === "bottom" ? maxY : dock.offsetTop);
   openerBounds = null;
   refreshAutoCollapse(true);
 }).observe(desktop);

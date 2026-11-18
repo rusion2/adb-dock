@@ -15,7 +15,7 @@ public static partial class OperationsChecks
     public static async Task<int?> HandleFakeToolAsync(string[] args)
     {
         var isDescendant = args.Length == 1 && args[0] == "--fake-operation-descendant";
-        if ((!isDescendant && (args.Length < 2 || args[0] != "-s")) ||
+        if ((!isDescendant && (args.Length < 2 || args[0] is not ("-s" or "-t"))) ||
             Environment.GetEnvironmentVariable(PipeEnvironment) is not { Length: > 0 } pipeName)
             return null;
 
@@ -73,14 +73,16 @@ public static partial class OperationsChecks
             ("Performance: directed read-only commands and partial unavailable results", PerformanceSamplingAsync),
             ("Performance: per-command timeout preserves remaining metrics", PerformanceTimeoutAsync),
             ("Performance: serial queue and caller cancellation reap only owned client", PerformanceQueueAsync),
-            ("Performance: disconnect between samples stops generation without replay", PerformanceMonitorAsync),
+            ("Performance: transport replacement between samples stops monitoring without replay", PerformanceMonitorAsync),
             ("AdbOperations: binary screenshot bytes and directed exec-out", ScreenshotAsync),
             ("AdbOperations: per-device queue, disconnect cancellation, no replay", DisconnectAsync),
+            ("AdbOperations: same-serial transport replacement cancels old clients and queued requests", ReplaceTransportAsync),
             ("AdbOperations: Logcat streaming, independent queue, cancel and dispose", LogcatAsync),
             ("AdbOperations: unexpected Logcat exit exposes stderr", LogcatFailureAsync),
             ("AdbOperations: exited Logcat drains inherited pipes without stopping descendant", LogcatInheritedPipesAsync),
             ("MirrorManager: renderer readiness, concurrent reuse and owned disposal", MirrorReuseAsync),
             ("MirrorManager: disconnect stops session, reconnect requires explicit start", MirrorDisconnectAsync),
+            ("MirrorManager: same-serial transport replacement stops session and checks fresh startup", MirrorTransportAsync),
             ("MirrorManager: startup cancellation and bounded failure output", MirrorFailureAsync),
             ("MirrorManager: inherited pipes cannot block exit or a fresh explicit start", MirrorInheritedPipesAsync)
         ];
@@ -310,6 +312,43 @@ public static partial class OperationsChecks
         Check(fake.Count == 3, "Reconnect never replays the queued Home or old installation.");
     }
 
+    private static async Task ReplaceTransportAsync(FakeTool fake, string directory)
+    {
+        const string serial = "reused-serial";
+        var apk = await MakeApkAsync(directory);
+        await using var operations = new AdbOperations(fake.Executable);
+        operations.ApplySnapshot(OnlineTransport(serial, 41));
+        var install = operations.InstallAsync(serial, apk);
+        var installer = await fake.NextAsync();
+        EqualArguments(installer, "-t", "41", "install", "-r", apk);
+        var queued = operations.SendKeyAsync(serial, "Home");
+        var logs = operations.ReadLogcatAsync(serial, _ => { });
+        var logcat = await fake.NextAsync();
+        EqualArguments(logcat, "-t", "41", "logcat", "-v", "time");
+
+        operations.ApplySnapshot(new DeviceSnapshot([], "temporary listing failure"));
+        operations.ApplySnapshot(OnlineTransport(serial, 41, "Updated model"));
+        Check(!install.IsCompleted && !queued.IsCompleted && !logs.IsCompleted && fake.Count == 2,
+            "A failed listing or refreshed model of the same transport preserves ongoing operations.");
+
+        operations.ApplySnapshot(OnlineTransport(serial, 42));
+        await ExpectAsync<OperationCanceledException>(() => install);
+        await ExpectAsync<OperationCanceledException>(() => queued);
+        await ExpectAsync<OperationCanceledException>(() => logs);
+        await installer.WaitForExitAsync();
+        await logcat.WaitForExitAsync();
+
+        var fresh = operations.SendKeyAsync(serial, "Back");
+        var key = await fake.NextAsync();
+        EqualArguments(key, "-t", "42", "shell", "input", "keyevent", "4");
+        await key.SendAsync(exitCode: 0);
+        await fresh.WaitAsync(Deadline);
+        Check(fake.Count == 3, "Only a new explicit request may use the new transport.");
+    }
+
+    private static DeviceSnapshot OnlineTransport(string serial, ulong id, string name = "Fixture") =>
+        new([new AdbDevice(serial, name, "device", "USB") { TransportId = id }]);
+
     private static async Task LogcatAsync(FakeTool fake, string directory)
     {
         await using var operations = new AdbOperations(fake.Executable);
@@ -445,6 +484,47 @@ public static partial class OperationsChecks
         Check(fake.Count == 2, "Only the explicit reconnect request launches a second client.");
         mirrors.UpdateOnlineDevices([]);
         await newPeer.WaitForExitAsync();
+    }
+
+    private static async Task MirrorTransportAsync(FakeTool fake, string directory)
+    {
+        const string serial = "mirror-transport";
+        await using var mirrors = new MirrorManager(fake.Executable, fake.Executable);
+        mirrors.ApplySnapshot(OnlineTransport(serial, 41));
+        var first = mirrors.StartOrShowAsync(serial);
+        var firstCheck = await fake.NextAsync();
+        EqualArguments(firstCheck, "-t", "41", "get-serialno");
+        await firstCheck.SendAsync(output: serial + "\n", exitCode: 0);
+        var oldMirror = await fake.NextAsync();
+        EqualArguments(oldMirror, "-s", serial, "--window-title", "ADB Dock · " + serial);
+        await oldMirror.SendAsync(output: "INFO: Renderer: fake-sdk-renderer\n");
+        await first.WaitAsync(Deadline);
+
+        mirrors.ApplySnapshot(new DeviceSnapshot([], "temporary listing failure"));
+        mirrors.ApplySnapshot(OnlineTransport(serial, 41, "Updated model"));
+        await mirrors.StartOrShowAsync(serial).WaitAsync(Deadline);
+        Check(fake.Count == 2, "Failed listings and metadata updates preserve the existing session.");
+        mirrors.ApplySnapshot(OnlineTransport(serial, 42));
+        await oldMirror.WaitForExitAsync();
+        Check(fake.Count == 2, "Transport replacement alone must not launch a mirror.");
+
+        var stale = mirrors.StartOrShowAsync(serial);
+        var staleCheck = await fake.NextAsync();
+        EqualArguments(staleCheck, "-t", "42", "get-serialno");
+        await staleCheck.SendAsync(error: "transport not found", exitCode: 1);
+        await ExpectAsync<InvalidOperationException>(() => stale);
+        Check(fake.Count == 3, "A stale transport must not launch the serial-only scrcpy client.");
+
+        var fresh = mirrors.StartOrShowAsync(serial);
+        var freshCheck = await fake.NextAsync();
+        EqualArguments(freshCheck, "-t", "42", "get-serialno");
+        await freshCheck.SendAsync(output: serial + "\n", exitCode: 0);
+        var newMirror = await fake.NextAsync();
+        EqualArguments(newMirror, "-s", serial, "--window-title", "ADB Dock · " + serial);
+        await newMirror.SendAsync(output: "INFO: Renderer: fake-sdk-renderer\n");
+        await fresh.WaitAsync(Deadline);
+        await mirrors.DisposeAsync();
+        await newMirror.WaitForExitAsync();
     }
 
     private static async Task MirrorFailureAsync(FakeTool fake, string directory)

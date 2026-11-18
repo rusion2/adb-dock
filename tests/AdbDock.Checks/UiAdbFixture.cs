@@ -1,4 +1,5 @@
 using System.Text;
+using AdbDock.Core;
 
 public static class UiAdbFixture
 {
@@ -38,7 +39,16 @@ public static class UiAdbFixture
                 await Task.Delay(200);
             }
         }
-        if (args[0] != "-s" || args.Length < 3) return null;
+        if (args.Length < 3) return null;
+        if (args[0] == "-t" && ulong.TryParse(args[1], out var id))
+        {
+            var devices = AdbService.ParseDevices(await ReadSnapshotAsync(snapshot));
+            var target = devices.SingleOrDefault(device => device.IsOnline && device.TransportId == id);
+            if (target is null) { Console.Error.WriteLine("No such fixture transport."); return 1; }
+            if (args[2] == "get-serialno") { Console.WriteLine(target.Serial); return 0; }
+            args = ["-s", target.Serial, .. args[2..]];
+        }
+        if (args[0] != "-s") return null;
         if (args is ["-s", var serial, "exec-out", "screencap", "-p"])
         {
             File.AppendAllText(snapshot + ".screenshots", serial + Environment.NewLine);

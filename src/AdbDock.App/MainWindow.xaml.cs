@@ -112,13 +112,8 @@ public partial class MainWindow : Window
             adb.SnapshotChanged += snapshot => Dispatcher.BeginInvoke(() =>
             {
                 if (currentGeneration != generation || exiting) return;
-                // Only a successful device listing can confirm that a running session lost its device.
-                if (snapshot.IsAvailable)
-                {
-                    var online = snapshot.Devices.Where(d => d.IsOnline).Select(d => d.Serial).ToArray();
-                    operations?.UpdateOnlineDevices(online);
-                    mirrors?.UpdateOnlineDevices(online);
-                }
+                operations?.ApplySnapshot(snapshot);
+                mirrors?.ApplySnapshot(snapshot);
                 var selected = model.Selected?.Serial;
                 model.Apply(snapshot);
                 var firstConnection = snapshot.IsAvailable && snapshot.OnlineCount > 0 && !settings.HasConnectedDevice;
@@ -248,7 +243,7 @@ public partial class MainWindow : Window
                 if (mirrors is null)
                 {
                     mirrors = new MirrorManager(ToolResolver.Resolve(settings.ScrcpyPath, "scrcpy.exe"), adb!.ExecutablePath);
-                    mirrors.UpdateOnlineDevices(model.Devices.Where(d => d.IsOnline).Select(d => d.Serial));
+                    mirrors.ApplySnapshot(new DeviceSnapshot(model.Devices.Select(row => row.Device).ToArray()));
                     var mirrorGeneration = generation;
                     mirrors.StatusChanged += (serial, text) => Dispatcher.BeginInvoke(() =>
                     {
@@ -279,7 +274,8 @@ public partial class MainWindow : Window
         {
             string? text = null;
             if (await ExecuteAsync(row, "读取设备信息", async token => text = await service.ReadInfoAsync(row.Serial, token), "设备信息读取完成", detail: () => text)
-                && IsVisible && !collapsed && model.Selected?.Serial == row.Serial)
+                && IsVisible && !collapsed && model.Selected is { } selected
+                && selected.Serial == row.Serial && selected.Device.TransportId == row.Device.TransportId)
                 ShowOwned(new DeviceInfoWindow(row.Serial, service, text!));
         }
         else if (action == "keys")
@@ -293,10 +289,12 @@ public partial class MainWindow : Window
     private async Task<bool> ExecuteAsync(DeviceRow device, string label, Func<CancellationToken, Task> action, string success,
         Func<string?>? detail = null, string? filePath = null)
     {
-        if (!model.Devices.Any(d => d.Serial == device.Serial && d.IsOnline))
+        var currentDevice = model.Devices.FirstOrDefault(d => d.Serial == device.Serial && d.IsOnline);
+        if (currentDevice is null || currentDevice.Device.TransportId != device.Device.TransportId)
         {
-            model.Feedback(device.Name + " · 设备已断开或不可用，本次操作未开始", true);
-            RecordResult(device.Name + " · " + label, $"设备：{device.Serial}\n设备已断开或不可用，本次操作未开始。");
+            var message = currentDevice is null ? "设备已断开或不可用，本次操作未开始。" : "设备连接已变化，请重新操作。";
+            model.Feedback(device.Name + " · " + message, true);
+            RecordResult(device.Name + " · " + label, $"设备：{device.Serial}\n{message}");
             return false;
         }
         if (!busy.Add(device.Serial))
@@ -436,7 +434,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (IsLoaded)
+            if (IsLoaded && !collapsed)
             {
                 var rect = Desktop.Bounds(this);
                 settings.WindowX = rect.Left; settings.WindowY = rect.Top;

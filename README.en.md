@@ -8,7 +8,7 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.3/AdbDock-0.1.3-beta.3-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.3 pre-release installer (Windows x64)</strong></a></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.4/AdbDock-0.1.3-beta.4-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.4 pre-release installer (Windows x64)</strong></a></p>
 
 <p align="center">Device connections require ADB. scrcpy is optional for mirroring. Download each tool separately.<br><a href="https://developer.android.com/tools/releases/platform-tools">Official Android SDK Platform-Tools (includes ADB)</a> · <a href="https://github.com/Genymobile/scrcpy">Official scrcpy</a></p>
 
@@ -20,9 +20,9 @@
 
 ADB Dock is a local Windows companion for Android devices. Check connection status, choose a device, then mirror its screen, save a screenshot, install an APK, send a basic key event, or inspect logs. It switches between a device panel and a compact edge tab, with no account or backend service required.
 
-**`v0.1.3-beta.3`** adds first-time connection guidance. The edge tab opens a compact action panel with device aliases and one-click screenshots. Logcat continues to collect logs while the display is paused. [Upgrade instructions](#upgrade)
+In **`v0.1.3-beta.4`**, the floating tab remembers where it was docked. On first collapse, it sits one-third of the way down the right edge of the work area. Active operations survive temporary ADB listener or device-list failures. Operations on the old connection end if the same serial reconnects with a new transport ID. [Upgrade instructions](#upgrade)
 
-Earlier `0.1.x` packages are test builds, including those without a beta suffix. Each future stable release will have its own `release/vX.Y.Z` branch and matching `vX.Y.Z` tag. [Versioning policy](VERSIONING.md)
+Earlier `0.1.x` packages are test builds, including those without a beta suffix. Each future stable release will have its own `release/vX.Y.Z` branch and matching `vX.Y.Z` tag. [Versioning policy](docs/versioning.md)
 
 ## Features
 
@@ -189,7 +189,7 @@ Startup checks use temporary registry keys and do not change the real startup en
 
 </details>
 
-`v0.1.3-beta.3` automated checks cover first-time connection, ADB listener recovery, screenshot validation, pausing Logcat, and isolated install, upgrade, and uninstall flows. See the test scope for physical devices and multi-monitor DPI. [Development record](开发进度.md)
+Core and native UI checks cover first-time connection, ADB discovery recovery, same-serial reconnection, screenshot validation, pausing Logcat, and docking the floating tab. See the development record for installation, physical device, and multi-monitor DPI verification. [Development record](docs/development.md)
 
 <a id="packaging"></a>
 ## Packaging
@@ -235,8 +235,8 @@ src/AdbDock.Core/       ADB communication, cancellation, processes, and mirrorin
 tests/                 Core and native-window checks
 installer/             NSIS installation and uninstallation
 scripts/               Packaging, installer validation, and icon generation
-docs/images/           Native screenshots with fixture data
+docs/                  Requirements, verification, versioning, and screenshots
 index.html             Browser interaction prototype; simulated devices/actions only
 ```
 
-[Requirements and acceptance criteria (Chinese)](需求说明.md) · [Development record (Chinese)](开发进度.md) · [Report an issue](https://github.com/rusion2/adb-dock/issues)
+[Requirements and acceptance criteria (Chinese)](docs/requirements.md) · [Development record (Chinese)](docs/development.md) · [Versioning policy](docs/versioning.md) · [Report an issue](https://github.com/rusion2/adb-dock/issues)

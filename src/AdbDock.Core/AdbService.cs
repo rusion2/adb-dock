@@ -305,7 +305,11 @@ public sealed class AdbService : IAsyncDisposable
             var connection = IsEmulator(fields[0]) ? "模拟器" :
                 fields.Skip(2).Any(field => field.StartsWith("usb:", StringComparison.Ordinal) && field.Length > 4) ? "USB" :
                 IsNetworkSerial(fields[0]) ? "网络" : "未知";
-            devices.Add(new AdbDevice(fields[0], name, state, connection));
+            var transport = fields.Skip(metadataStart).FirstOrDefault(field => field.StartsWith("transport_id:", StringComparison.Ordinal));
+            ulong? transportId = transport is not null &&
+                ulong.TryParse(transport.AsSpan("transport_id:".Length), NumberStyles.None, CultureInfo.InvariantCulture, out var id) &&
+                id != 0 ? id : null;
+            devices.Add(new AdbDevice(fields[0], name, state, connection) { TransportId = transportId });
         }
         return devices.AsReadOnly();
     }

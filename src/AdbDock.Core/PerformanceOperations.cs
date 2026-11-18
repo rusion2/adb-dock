@@ -3,7 +3,10 @@ namespace AdbDock.Core;
 public sealed partial class AdbOperations
 {
     public Task<DevicePerformanceSample> ReadPerformanceAsync(string serial, CancellationToken cancellationToken = default) =>
-        WithDeviceAsync(serial, async token =>
+        ReadPerformanceAsync(serial, cancellationToken, null);
+
+    private Task<DevicePerformanceSample> ReadPerformanceAsync(string serial, CancellationToken cancellationToken, DeviceConnection? expectedConnection) =>
+        WithDeviceAsync(serial, async (connection, token) =>
         {
             var cpu = await ReadMetricAsync(["shell", "cat", "/proc/stat"], PerformanceParser.ParseCpu, token).ConfigureAwait(false);
             var memory = await ReadMetricAsync(["shell", "cat", "/proc/meminfo"], PerformanceParser.ParseMemory, token).ConfigureAwait(false);
@@ -14,7 +17,7 @@ public sealed partial class AdbOperations
             {
                 try
                 {
-                    var result = await ProcessRunner.RunAsync(_adbPath, new[] { "-s", serial }.Concat(arguments),
+                    var result = await ProcessRunner.RunAsync(_adbPath, connection.Target.Arguments(arguments),
                         TimeSpan.FromSeconds(5), operation).ConfigureAwait(false);
                     result.EnsureSuccess();
                     operation.ThrowIfCancellationRequested();
@@ -27,18 +30,18 @@ public sealed partial class AdbOperations
                     return (null, exception.Message);
                 }
             }
-        }, queued: true, cancellationToken);
+        }, queued: true, cancellationToken, expectedConnection);
 
     public Task MonitorPerformanceAsync(string serial, Action<DevicePerformanceSample> onSample, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(onSample);
         // The outer scope pins the device generation even between samples. Reconnecting the same
         // serial cannot revive this monitor; starting again always requires an explicit user action.
-        return WithDeviceAsync<bool>(serial, async token =>
+        return WithDeviceAsync<bool>(serial, async (connection, token) =>
         {
             while (true)
             {
-                var sample = await ReadPerformanceAsync(serial, token).ConfigureAwait(false);
+                var sample = await ReadPerformanceAsync(serial, token, connection).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
                 onSample(sample);
                 await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);

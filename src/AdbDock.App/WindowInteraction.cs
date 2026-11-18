@@ -24,7 +24,6 @@ public partial class MainWindow
     private bool draggingEdge;
     private NativePoint? pressStart;
     private NativeRect pressBounds;
-    private DockSide pressSide;
     private string? edgeSignature;
 
     private void InitializeInteraction()
@@ -86,7 +85,8 @@ public partial class MainWindow
     private void RestorePlacement()
     {
         FitExpanded();
-        var work = Desktop.WorkArea(this);
+        var work = settings.FloatingTab is { } tab ? Desktop.WorkArea(new NativePoint { X = tab.X, Y = tab.Y })
+            : Desktop.WorkArea(this);
         var bounds = Desktop.Bounds(this);
         Desktop.Place(this, settings.WindowX ?? work.Right - bounds.Width - 32, settings.WindowY ?? work.Top + Math.Max(20, (work.Height - bounds.Height) / 2));
         FitExpanded();
@@ -121,22 +121,57 @@ public partial class MainWindow
 
     private void RenderEdge()
     {
-        if (Desktop.Handle(this) == 0 || pressStart is not null) return;
-        var horizontal = settings.Side is DockSide.Top or DockSide.Bottom;
-        var work = Desktop.WorkArea(this);
+        if (!collapsed || Desktop.Handle(this) == 0 || pressStart is not null || settings.FloatingTab is not { } placement) return;
+        settings.Side = placement.Side;
+        var work = Desktop.WorkArea(new NativePoint { X = placement.X, Y = placement.Y });
         var scale = Desktop.Scale(this);
+        RenderEdgeAt(placement, work, scale);
+        // The HWND can change DPI when it enters the destination. Reapply the original anchor before saving it.
+        var destinationScale = Desktop.Scale(this);
+        if (destinationScale != scale) RenderEdgeAt(placement, work, destinationScale);
+    }
+
+    private void RenderEdgeAt(FloatingTabPlacement placement, NativeRect work, double scale)
+    {
+        var horizontal = settings.Side is DockSide.Top or DockSide.Bottom;
         var compactBase = horizontal ? 110 : 132;
-        var axisLength = (horizontal ? work.Width : work.Height) / scale;
+        var start = horizontal ? work.Left : work.Top;
+        var end = horizontal ? work.Right : work.Bottom;
+        var minimumLength = (int)Math.Round((compactBase + 39) * scale);
+        var anchor = Math.Clamp(horizontal ? placement.X : placement.Y, start, Math.Max(start, end - minimumLength));
+        var axisLength = (end - anchor) / scale;
         // A +N entry uses one complete device slot, including at a short edge.
-        var slots = Math.Clamp((int)((axisLength - compactBase - 16) / 39), 1, 6);
+        var slots = Math.Clamp((int)((axisLength - compactBase) / 39), 1, 6);
         var capacity = Math.Min(5, slots);
         if (model.EdgeDevices.Count > capacity) capacity = Math.Min(5, slots - 1);
         var rows = model.EdgeDevices.Take(capacity).ToArray();
         var extra = model.EdgeDevices.Count - rows.Length;
         var signature = $"{settings.Side}:{capacity}:{model.AdbAvailable}:{model.OnlineCount}:{model.TotalCount}:{model.ShortStatus}:" + string.Join("|", rows.Select(r => $"{r.Tooltip}/{r.EdgeLabel}")) + ":" + extra;
-        if (signature == edgeSignature) return;
-        edgeSignature = signature;
-        var old = Desktop.Bounds(this);
+        if (signature != edgeSignature)
+        {
+            edgeSignature = signature;
+            RenderEdgeContents(horizontal, rows, extra);
+        }
+        Width = Math.Min(horizontal ? compactBase + EdgeDevices.Children.Count * 39 : 52, work.Width / scale);
+        Height = Math.Min(horizontal ? 64 : compactBase + EdgeDevices.Children.Count * 39, work.Height / scale);
+        var width = (int)Math.Round(Width * scale);
+        var height = (int)Math.Round(Height * scale);
+        var x = horizontal ? anchor : settings.Side == DockSide.Left ? work.Left : work.Right - width;
+        var y = horizontal ? settings.Side == DockSide.Top ? work.Top : work.Bottom - height : anchor;
+        var current = Desktop.Bounds(this);
+        if (current.Left != x || current.Top != y || current.Width != width || current.Height != height)
+            Desktop.Place(this, x, y, width, height);
+    }
+
+    private void RenderEdgeContents(bool horizontal, DeviceRow[] rows, int extra)
+    {
+        Frame.CornerRadius = settings.Side switch
+        {
+            DockSide.Left => new(0, 14, 14, 0),
+            DockSide.Right => new(14, 0, 0, 14),
+            DockSide.Top => new(0, 0, 14, 14),
+            _ => new(14, 14, 0, 0)
+        };
         EdgePanel.Orientation = horizontal ? Orientation.Horizontal : Orientation.Vertical;
         EdgeDevices.Orientation = EdgePanel.Orientation;
         EdgeSeparator.Width = horizontal ? 1 : double.NaN;
@@ -178,10 +213,6 @@ public partial class MainWindow
             System.Windows.Automation.AutomationProperties.SetName(button, extra > 0 ? "展开其余设备" : model.EmptyTitle);
             EdgeDevices.Children.Add(button);
         }
-        if (!collapsed) return;
-        Width = horizontal ? compactBase + EdgeDevices.Children.Count * 39 : 52;
-        Height = horizontal ? 64 : compactBase + EdgeDevices.Children.Count * 39;
-        ApplyEdgePosition(old.Left + old.Width / 2, old.Top + old.Height / 2, work);
     }
 
     private void AttachEdgeDeviceGesture(Button button, string serial)
@@ -209,33 +240,37 @@ public partial class MainWindow
         };
     }
 
-    private void ApplyEdgePosition(int centerX, int centerY, NativeRect work)
+    private static FloatingTabPlacement FloatingTabAnchor(DockSide side, NativeRect work, NativeRect bounds) => side switch
     {
-        var scale = Desktop.Scale(this);
-        var width = (int)Math.Round(Width * scale);
-        var height = (int)Math.Round(Height * scale);
-        var x = settings.Side == DockSide.Left ? work.Left : settings.Side == DockSide.Right ? work.Right - width : Math.Clamp(centerX - width / 2, work.Left + 8, Math.Max(work.Left + 8, work.Right - width - 8));
-        var y = settings.Side == DockSide.Top ? work.Top : settings.Side == DockSide.Bottom ? work.Bottom - height : Math.Clamp(centerY - height / 2, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - height - 8));
-        Desktop.Place(this, x, y, width, height);
+        DockSide.Left => new(side, work.Left, Math.Clamp(bounds.Top, work.Top, work.Bottom - 1)),
+        DockSide.Right => new(side, work.Right - 1, Math.Clamp(bounds.Top, work.Top, work.Bottom - 1)),
+        DockSide.Top => new(side, Math.Clamp(bounds.Left, work.Left, work.Right - 1), work.Top),
+        _ => new(side, Math.Clamp(bounds.Left, work.Left, work.Right - 1), work.Bottom - 1)
+    };
+
+    private void RememberVisibleTab()
+    {
+        var bounds = Desktop.Bounds(this);
+        settings.FloatingTab = new FloatingTabPlacement(settings.Side, bounds.Left, bounds.Top);
     }
 
-    private void CollapsePanel()
+    private void CollapsePanel() => CollapsePanelAt(null);
+
+    private void CollapsePanelAt(FloatingTabPlacement? move)
     {
         if (collapsed || interactionDepth > 0 || pressStart is not null || titleDragging || !IsVisible) return;
         if (!settings.ShowFloatingTab) return;
-        var bounds = expandedFromTab ?? Desktop.Bounds(this);
-        var center = new NativePoint { X = bounds.Left + bounds.Width / 2, Y = bounds.Top + bounds.Height / 2 };
         var work = Desktop.WorkArea(this);
-        if (settings.Side == DockSide.None) settings.Side = Desktop.Nearest(center, work);
+        var firstPlacement = settings.FloatingTab is null;
+        settings.FloatingTab = move ?? settings.FloatingTab ?? new(DockSide.Right, work.Right - 1, work.Top + work.Height / 3);
         collapsed = true;
         expandedFromTab = null;
         UpdateLeaveTimer();
         ExpandedPanel.Visibility = Visibility.Collapsed;
         EdgePanel.Visibility = Visibility.Visible;
-        Frame.CornerRadius = settings.Side switch { DockSide.Left => new(0, 14, 14, 0), DockSide.Right => new(14, 0, 0, 14), DockSide.Top => new(0, 0, 14, 14), _ => new(14, 14, 0, 0) };
         edgeSignature = null;
         RenderEdge();
-        ApplyEdgePosition(center.X, center.Y, work);
+        if (firstPlacement || move is not null) RememberVisibleTab();
         if (keyboardNavigation && IsActive) EdgeSummary.Focus();
         SaveSettings();
     }
@@ -332,7 +367,8 @@ public partial class MainWindow
         if (settings.Side != DockSide.None)
             Desktop.Place(this, settings.Side == DockSide.Left ? work.Left : settings.Side == DockSide.Right ? work.Right - bounds.Width : bounds.Left, settings.Side == DockSide.Top ? work.Top : settings.Side == DockSide.Bottom ? work.Bottom - bounds.Height : bounds.Top);
         Desktop.Clamp(this);
-        if (settings.Side != DockSide.None && settings.ShowFloatingTab) CollapsePanel();
+        if (settings.Side != DockSide.None && settings.ShowFloatingTab)
+            CollapsePanelAt(FloatingTabAnchor(settings.Side, work, Desktop.Bounds(this)));
         else SaveSettings();
     }
 
@@ -351,7 +387,6 @@ public partial class MainWindow
     {
         pressStart = start;
         pressBounds = Desktop.Bounds(this);
-        pressSide = settings.Side;
         draggingEdge = false;
         EdgeSummary.Focus();
         if (!EdgeSummary.CaptureMouse()) FinishPress(true);
@@ -394,25 +429,13 @@ public partial class MainWindow
         if (wasDragging && !cancel)
         {
             var cursor = releasePoint ?? Desktop.Cursor; var work = Desktop.WorkArea(cursor);
-            settings.Side = Desktop.Nearest(cursor, work);
-            edgeSignature = null;
-            RenderEdge();
-            ApplyEdgePosition(cursor.X, cursor.Y, work);
-        }
-        else if (cancel && wasDragging)
-        {
-            settings.Side = pressSide;
-            edgeSignature = null;
-            RenderEdge();
-            Desktop.Place(this, pressBounds.Left, pressBounds.Top);
-            Desktop.Clamp(this);
+            MoveFloatingTab(Desktop.Nearest(cursor, work), work);
         }
         else
         {
-            // Device changes received while the summary held the mouse were deferred.
+            // Restore the saved anchor and apply any device changes deferred during capture.
             RenderEdge();
         }
-        if (wasDragging) SaveSettings();
     }
     private void SummaryLostCapture(object sender, MouseEventArgs e) { if (pressStart is not null) FinishPress(true); }
     private void SummaryKeyDown(object sender, KeyEventArgs e)
@@ -421,9 +444,13 @@ public partial class MainWindow
         var side = e.Key switch { Key.Left => DockSide.Left, Key.Right => DockSide.Right, Key.Up => DockSide.Top, Key.Down => DockSide.Bottom, _ => DockSide.None };
         if (side == DockSide.None) return;
         e.Handled = true;
-        settings.Side = side;
-        edgeSignature = null;
+        if (side != settings.Side) MoveFloatingTab(side, Desktop.WorkArea(this));
+    }
+    private void MoveFloatingTab(DockSide side, NativeRect work)
+    {
+        settings.FloatingTab = FloatingTabAnchor(side, work, Desktop.Bounds(this));
         RenderEdge();
+        RememberVisibleTab();
         SaveSettings();
     }
     private void WindowKeyDown(object sender, KeyEventArgs e)

@@ -36,6 +36,11 @@ public sealed class SettingsStore
             settings.DeviceAliases ??= new(StringComparer.Ordinal);
             if (string.IsNullOrWhiteSpace(settings.ScreenshotDirectory)) settings.ScreenshotDirectory = new AppSettings().ScreenshotDirectory;
             if (!Enum.IsDefined(settings.Side)) settings.Side = DockSide.None;
+            if (settings.FloatingTab is { } tab && (tab.Side == DockSide.None || !Enum.IsDefined(tab.Side)))
+                settings.FloatingTab = null;
+            if (root.ValueKind == JsonValueKind.Object && !root.TryGetProperty(nameof(AppSettings.FloatingTab), out _) && settings.Side != DockSide.None
+                && settings.WindowX is int x && settings.WindowY is int y)
+                settings.FloatingTab = new FloatingTabPlacement(settings.Side, x, y);
             if (settings.AutoCollapseDelaySeconds is < AppSettings.MinimumAutoCollapseDelaySeconds or > AppSettings.MaximumAutoCollapseDelaySeconds)
                 settings.AutoCollapseDelaySeconds = AppSettings.DefaultAutoCollapseDelaySeconds;
             return settings;

@@ -2,6 +2,7 @@ namespace AdbDock.Core;
 
 public sealed record AdbDevice(string Serial, string Name, string State, string Connection)
 {
+    public ulong? TransportId { get; init; }
     public bool IsOnline => State == "device";
     public string StatusLabel => State switch
     {
@@ -30,6 +31,8 @@ public sealed record ProcessResult(int ExitCode, string Output, string Error)
 
 public enum DockSide { None, Left, Right, Top, Bottom }
 
+public sealed record FloatingTabPlacement(DockSide Side, int X, int Y);
+
 public sealed class AppSettings
 {
     public const int DefaultAutoCollapseDelaySeconds = 2;
@@ -45,6 +48,7 @@ public sealed class AppSettings
     public int AutoCollapseDelaySeconds { get; set; } = DefaultAutoCollapseDelaySeconds;
     public bool AutoStart { get; set; }
     public DockSide Side { get; set; }
+    public FloatingTabPlacement? FloatingTab { get; set; }
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
     public Dictionary<string, string> DeviceAliases { get; set; } = new(StringComparer.Ordinal);

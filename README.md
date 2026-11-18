@@ -8,7 +8,7 @@
 
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.3/AdbDock-0.1.3-beta.3-win-x64-Setup.exe"><strong>下载 v0.1.3-beta.3 测试版安装包（Windows x64）</strong></a></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.4/AdbDock-0.1.3-beta.4-win-x64-Setup.exe"><strong>下载 v0.1.3-beta.4 测试版安装包（Windows x64）</strong></a></p>
 
 <p align="center">连接设备需要 ADB，投屏才需要 scrcpy。两项工具均需单独获取。<br><a href="https://developer.android.com/tools/releases/platform-tools">官方 Android SDK Platform-Tools（含 ADB）</a> · <a href="https://github.com/Genymobile/scrcpy">官方 scrcpy</a></p>
 
@@ -20,7 +20,7 @@
 
 ADB Dock 是一个本地运行的 Windows Android 设备助手：查看设备是否在线，选择目标设备，再进行投屏、截图、安装 APK、按键控制或日志排查。展开时是设备面板，收起时是贴边状态条，无需账号或后端服务。
 
-**`v0.1.3-beta.3` 测试版**新增首启连接引导。浮窗可直达紧凑设备操作面板，设备备注、快捷截图和日志暂停也得到更新。此前的 `0.1.x` 安装包和便携包也属于测试版。详见[升级步骤](#upgrade)与[版本及正式发布分支约定](VERSIONING.md)。
+**`v0.1.3-beta.4` 测试版**会记住浮窗的停靠位置，首次收起时默认停在工作区右侧三分之一高度处。ADB 监听或设备列表查询短暂出错时，正在进行的操作会继续。同一序列号的设备重连并获得新传输 ID 后，旧连接上的操作会结束。详见[升级步骤](#upgrade)与[版本及正式发布分支约定](docs/versioning.md)。
 
 ## 主要功能
 
@@ -189,7 +189,7 @@ $uiChecks = (Resolve-Path '.\tests\AdbDock.UiChecks\bin\Release\net10.0-windows\
 
 </details>
 
-`v0.1.3-beta.3` 的自动检查覆盖首次连接、监听异常恢复、截图校验、日志暂停，以及隔离环境下的安装、升级和卸载。真机和多屏 DPI 的验收范围见[开发进度](开发进度.md)。
+核心和原生界面检查覆盖首次连接、ADB 发现异常恢复、同一序列号重连、截图校验、日志暂停和浮窗停靠。安装流程、真机和多屏 DPI 的验收范围见[开发进度](docs/development.md)。
 
 <a id="packaging"></a>
 ## 打包发布
@@ -235,8 +235,8 @@ src/AdbDock.Core/       ADB 通信、任务取消、进程与投屏会话
 tests/                 核心检查与原生窗口检查
 installer/             NSIS 安装与卸载脚本
 scripts/               打包、安装验证与图标生成
-docs/images/           使用假设备数据的原生界面截图
+docs/                  需求、验收、版本约定与原生界面截图
 index.html             浏览器交互原型，仅使用模拟设备与命令
 ```
 
-[需求与验收基线](需求说明.md) · [开发进度与待验收项目](开发进度.md) · [反馈问题](https://github.com/rusion2/adb-dock/issues)
+[需求与验收基线](docs/requirements.md) · [开发进度与待验收项目](docs/development.md) · [版本约定](docs/versioning.md) · [反馈问题](https://github.com/rusion2/adb-dock/issues)

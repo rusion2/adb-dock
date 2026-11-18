@@ -67,7 +67,16 @@ public sealed class MirrorManager : IAsyncDisposable
             }
 
             request.Token.ThrowIfCancellationRequested();
+            if (generation.Target.TransportId is not null)
+            {
+                // scrcpy selects by serial. Reject a stale request before launching it.
+                var deviceSerial = await ProcessRunner.RunAsync(_adbPath, generation.Target.Arguments("get-serialno"),
+                    TimeSpan.FromSeconds(5), request.Token).ConfigureAwait(false);
+                if (deviceSerial.ExitCode != 0 || !string.Equals(deviceSerial.Output.Trim(), serial, StringComparison.Ordinal))
+                    throw new InvalidOperationException("设备连接已变化，请刷新设备列表后重新启动投屏。");
+            }
             Notify(serial, "投屏启动中…", () => device.Generation == generation && !generation.Token.IsCancellationRequested);
+            request.Token.ThrowIfCancellationRequested();
             var process = ProcessRunner.Start(_scrcpyPath,
                 ["-s", serial, "--window-title", $"ADB Dock · {serial}"],
                 new Dictionary<string, string> { ["ADB"] = _adbPath });
@@ -114,11 +123,16 @@ public sealed class MirrorManager : IAsyncDisposable
         }
     }
 
-    public void UpdateOnlineDevices(IEnumerable<string> serials)
+    public void UpdateOnlineDevices(IEnumerable<string> serials) => UpdateOnlineTargets(DeviceTarget.FromSerials(serials));
+
+    public void ApplySnapshot(DeviceSnapshot snapshot)
     {
-        ArgumentNullException.ThrowIfNull(serials);
-        var online = serials.ToHashSet(StringComparer.Ordinal);
-        if (online.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("设备序列号不能为空。", nameof(serials));
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.IsAvailable) UpdateOnlineTargets(DeviceTarget.Online(snapshot));
+    }
+
+    private void UpdateOnlineTargets(Dictionary<string, DeviceTarget> online)
+    {
         List<DeviceConnection> disconnected = [];
         List<string> pendingStarts = [];
         lock (_sync)
@@ -126,20 +140,22 @@ public sealed class MirrorManager : IAsyncDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             foreach (var (serial, device) in _devices)
             {
-                if (device.Generation is null || online.Contains(serial)) continue;
-                disconnected.Add(device.Generation);
+                if (device.Generation is not { } active) continue;
+                var stillOnline = online.TryGetValue(serial, out var target);
+                if (stillOnline && target == active.Target) continue;
+                disconnected.Add(active);
                 device.Generation = null;
                 if (device.Current is { } current)
-                    current.SetStopReason("设备已断开，投屏会话已停止。");
+                    current.SetStopReason(stillOnline ? "设备连接已变化，原投屏会话已停止。" : "设备已断开，投屏会话已停止。");
                 else if (device.ActiveStarts > 0)
                     pendingStarts.Add(serial);
                 RemoveIdleDevice(serial, device);
             }
-            foreach (var serial in online)
+            foreach (var (serial, target) in online)
             {
                 if (!_devices.TryGetValue(serial, out var device))
                     _devices.Add(serial, device = new DeviceSessions());
-                device.Generation ??= new DeviceConnection();
+                device.Generation ??= new DeviceConnection(target);
             }
         }
         foreach (var connection in disconnected) connection.Disconnect();
