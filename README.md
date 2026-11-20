@@ -8,7 +8,7 @@
 
 <p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.4/AdbDock-0.1.3-beta.4-win-x64-Setup.exe"><strong>下载 v0.1.3-beta.4 测试版安装包（Windows x64）</strong></a></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3/AdbDock-0.1.3-win-x64-Setup.exe"><strong>下载 v0.1.3 正式版安装包（Windows x64）</strong></a></p>
 
 <p align="center">连接设备需要 ADB，投屏才需要 scrcpy。两项工具均需单独获取。<br><a href="https://developer.android.com/tools/releases/platform-tools">官方 Android SDK Platform-Tools（含 ADB）</a> · <a href="https://github.com/Genymobile/scrcpy">官方 scrcpy</a></p>
 
@@ -20,7 +20,9 @@
 
 ADB Dock 是一个本地运行的 Windows Android 设备助手：查看设备是否在线，选择目标设备，再进行投屏、截图、安装 APK、按键控制或日志排查。展开时是设备面板，收起时是贴边状态条，无需账号或后端服务。
 
-**`v0.1.3-beta.4` 测试版**会记住浮窗的停靠位置，首次收起时默认停在工作区右侧三分之一高度处。ADB 监听或设备列表查询短暂出错时，正在进行的操作会继续。同一序列号的设备重连并获得新传输 ID 后，旧连接上的操作会结束。详见[升级步骤](#upgrade)与[版本及正式发布分支约定](docs/versioning.md)。
+**`v0.1.3`** 是首个正式版。浮窗会记住停靠位置，首次收起时默认停在工作区右侧三分之一高度处。ADB 监听或设备列表查询短暂出错时，正在进行的操作会继续。同一序列号的设备重连并获得新传输 ID 后，旧连接上的操作会结束。详见[升级步骤](#upgrade)。
+
+此前的 `0.1.x` 安装包和便携包仍属于历史测试产物，包括版本号没有后缀的包。[版本与发布分支约定](docs/versioning.md)
 
 ## 主要功能
 

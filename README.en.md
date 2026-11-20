@@ -8,7 +8,7 @@
 
 <p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3-beta.4/AdbDock-0.1.3-beta.4-win-x64-Setup.exe"><strong>Download the v0.1.3-beta.4 pre-release installer (Windows x64)</strong></a></p>
+<p align="center"><a href="https://github.com/rusion2/adb-dock/releases/download/v0.1.3/AdbDock-0.1.3-win-x64-Setup.exe"><strong>Download the v0.1.3 stable installer (Windows x64)</strong></a></p>
 
 <p align="center">Device connections require ADB. scrcpy is optional for mirroring. Download each tool separately.<br><a href="https://developer.android.com/tools/releases/platform-tools">Official Android SDK Platform-Tools (includes ADB)</a> · <a href="https://github.com/Genymobile/scrcpy">Official scrcpy</a></p>
 
@@ -20,9 +20,9 @@
 
 ADB Dock is a local Windows companion for Android devices. Check connection status, choose a device, then mirror its screen, save a screenshot, install an APK, send a basic key event, or inspect logs. It switches between a device panel and a compact edge tab, with no account or backend service required.
 
-In **`v0.1.3-beta.4`**, the floating tab remembers where it was docked. On first collapse, it sits one-third of the way down the right edge of the work area. Active operations survive temporary ADB listener or device-list failures. Operations on the old connection end if the same serial reconnects with a new transport ID. [Upgrade instructions](#upgrade)
+**`v0.1.3`** is the first stable release. The floating tab remembers where it was docked. On first collapse, it sits one-third of the way down the right edge of the work area. Active operations survive temporary ADB listener or device-list failures. Operations on the old connection end if the same serial reconnects with a new transport ID. [Upgrade instructions](#upgrade)
 
-Earlier `0.1.x` packages are test builds, including those without a beta suffix. Each future stable release will have its own `release/vX.Y.Z` branch and matching `vX.Y.Z` tag. [Versioning policy](docs/versioning.md)
+Earlier `0.1.x` installers and portable packages remain historical test builds, including those without a beta suffix. [Versioning policy](docs/versioning.md)
 
 ## Features
 

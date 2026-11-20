@@ -1,6 +1,6 @@
 # 版本与发布分支约定
 
-当前版本是 **`v0.1.3-beta.4`**。此前所有 `0.1.x` 安装包和便携包，包括没有后缀的版本，均为历史测试产物；保留原名，不补建正式发布。
+**`v0.1.3`** 是首个正式版。此前的 `0.1.x` 安装包和便携包仍属于历史测试产物，包括版本号没有后缀的包。这些包保留原名，不补建正式发布。
 
 - 测试版：`vX.Y.Z-beta.N`，首个测试版从 `beta.1` 开始。
 - 正式版：`vX.Y.Z`，不带后缀。
@@ -37,6 +37,6 @@ git rev-parse HEAD
 
 ## English quick reference
 
-Use `vX.Y.Z-beta.N` for betas, starting at `beta.1`, and `vX.Y.Z` for stable releases. Earlier `0.1.x` packages are legacy test artifacts, including unsuffixed versions; do not rename them or create stable releases retroactively.
+`v0.1.3` is the first stable release. Earlier `0.1.x` installers and portable packages, including unsuffixed versions, keep their original names and status as historical test builds. Use `vX.Y.Z-beta.N` for betas, starting at `beta.1`, and `vX.Y.Z` for stable releases.
 
 For stable releases, create `release/vX.Y.Z` from the chosen functional commit, update and commit the project `Version`, then check the final commit and clean tree. Package names and displayed versions derive from the project version. Update the installer links and release summaries in both README files when preparing a release. Run tests and packaging locally before pushing. After verification, run `scripts/ArchiveStableRelease.ps1` with no arguments. It atomically pushes and verifies the matching branch and tag before publication. Publish the artifacts from that commit against the verified tag. Keep both references frozen and use a new version for later fixes.
